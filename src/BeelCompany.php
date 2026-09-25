@@ -6,19 +6,27 @@ namespace Lenorix\LaravelBeel;
 
 use Lenorix\BeelSdk\Beel;
 use Lenorix\BeelSdk\Generated\Client;
+use Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyProductsResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyRecurringInvoicesResource;
+use Lenorix\BeelSdk\Resource\Company\CompanySeriesResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyTaxConfigurationResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyVeriFactuConfigurationResource;
 use Lenorix\BeelSdk\Resource\CompanyScope;
 
 /**
  * Company scope decorator that keeps the SDK resources intact and exposes its raw client.
  *
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource $invoices
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource $customers
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyProductsResource $products
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanySeriesResource $series
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyRecurringInvoicesResource $recurringInvoices
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource $paymentConnections
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyTaxConfigurationResource $taxConfiguration
- * @property-read \Lenorix\BeelSdk\Resource\Company\CompanyVeriFactuConfigurationResource $verifactuConfiguration
+ * @property-read CompanyInvoicesResource $invoices
+ * @property-read CompanyCustomersResource $customers
+ * @property-read CompanyProductsResource $products
+ * @property-read CompanySeriesResource $series
+ * @property-read CompanyRecurringInvoicesResource $recurringInvoices
+ * @property-read CompanyPaymentConnectionsResource $paymentConnections
+ * @property-read CompanyTaxConfigurationResource $taxConfiguration
+ * @property-read CompanyVeriFactuConfigurationResource $verifactuConfiguration
  */
 final class BeelCompany
 {

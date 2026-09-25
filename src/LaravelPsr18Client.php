@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel;
 
+use Http\Discovery\Psr17FactoryDiscovery;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
-use Http\Discovery\Psr17FactoryDiscovery;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Client\NetworkExceptionInterface;
