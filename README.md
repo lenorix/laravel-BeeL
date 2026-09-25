@@ -27,47 +27,50 @@ php artisan vendor:publish --tag="beel-config"
 
 The config file is `config/beel.php`. It controls automatic route registration and Laravel HTTP timeouts/retries. Laravel owns retries in this integration; the SDK retry layer is disabled to avoid stacking retries, and the SDK continues to generate `Idempotency-Key` headers for POST requests.
 
-## Use the default company
+## Configure and use the client
 
-The facade and container resolve to `BeelManager`:
+The BeeL API key, company UUID, and base URL are application service settings. The manager resolves them and creates a normal SDK client:
 
 ```php
-use Lenorix\LaravelBeel\BeelManager;
+$beel = app(\Lenorix\LaravelBeel\BeelManager::class)->client();
+$rawClient = $beel->raw;
+```
 
-$company = app(BeelManager::class)->company();
+The facade resolves to the same manager:
+
+```php
+$beel = LaravelBeel::client();
+```
+
+For company-scoped operations, get a scope using the configured `company_id` or pass a UUID explicitly:
+
+```php
+$company = $beel->company(config('services.beel.company_id'));
 $invoice = $company->invoices->create($request);
 ```
 
-Or use the facade:
+Or use the manager convenience method, which resolves the company UUID from configuration:
 
 ```php
 $company = LaravelBeel::company();
 ```
 
-`company_id` is the BeeL company UUID. It is independent from the API key.
-
-## Tenant credentials
-
-Pass tenant credentials when creating a scope. Each call creates a new SDK client and transport, so authenticated clients are never shared between tenants:
+The manager creates a fresh SDK client each time `client()` is called and does not retain request state. An API key can optionally override the configured key for a particular client:
 
 ```php
-$company = app(BeelManager::class)->company(
+$beel = LaravelBeel::client(apiKey: $customApiKey);
+```
+
+Company scopes expose the SDK's resource objects directly, plus `scope` (the original SDK scope) and `raw` (the generated client for endpoints not covered by resource wrappers). `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
+
+Passing per-tenant credentials is also supported when an application needs it, but is optional:
+
+```php
+$company = LaravelBeel::company(
     apiKey: $tenant->beel_api_key,
     companyId: $tenant->beel_company_id,
 );
-
-$invoice = $company->invoices->create($request);
 ```
-
-For account resources or access to the full SDK client, use `client()`:
-
-```php
-$beel = app(BeelManager::class)->client(apiKey: $tenant->beel_api_key);
-$account = $beel->account($tenant->beel_account_id);
-$rawClient = $beel->raw;
-```
-
-The returned company scope exposes the SDK's resource objects directly, along with `scope` (the original SDK scope) and `raw` (the generated client for endpoints not yet covered by a resource wrapper). For example, `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
 
 ## Laravel HTTP client
 
