@@ -2,7 +2,7 @@
 
 namespace Lenorix\LaravelBeel;
 
-use Lenorix\LaravelBeel\Commands\LaravelBeelCommand;
+use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -10,16 +10,15 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
 {
     public function configurePackage(Package $package): void
     {
-        /*
-         * This class is a Package Service Provider
-         *
-         * More info: https://github.com/spatie/laravel-package-tools
-         */
-        $package
-            ->name('laravel-beel')
+        $package->name('laravel-beel')
             ->hasConfigFile()
-            ->hasViews()
-            ->hasMigration('create_laravel_beel_table')
-            ->hasCommand(LaravelBeelCommand::class);
+            ->hasRoutes('beel');
+    }
+
+    public function packageRegistered(): void
+    {
+        $this->app->singleton(BeelManager::class);
+        $this->app->singleton(BeelHttpClientFactory::class);
+        $this->app->bind(WebhookSecretResolver::class, ConfigWebhookSecretResolver::class);
     }
 }

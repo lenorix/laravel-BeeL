@@ -1,10 +1,12 @@
 {
     "name": "lenorix/laravel-beel",
-    "description": "Unofficial community PHP SDK for the BeeL invoicing API",
+    "description": "Laravel integration for the BeeL invoicing API PHP SDK",
     "keywords": [
         "lenorix",
         "laravel",
-        "laravel-beel"
+        "laravel-beel",
+        "beel",
+        "invoicing"
     ],
     "homepage": "https://github.com/lenorix/laravel-beel",
     "license": "MIT",
@@ -35,8 +37,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Lenorix\\LaravelBeel\\": "src/",
-            "Lenorix\\LaravelBeel\\Database\\Factories\\": "database/factories/"
+            "Lenorix\\LaravelBeel\\": "src/"
         }
     },
     "autoload-dev": {
