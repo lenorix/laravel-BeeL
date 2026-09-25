@@ -2,9 +2,9 @@
 
 namespace Lenorix\LaravelBeel;
 
+use Lenorix\LaravelBeel\Commands\LaravelBeelCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use Lenorix\LaravelBeel\Commands\LaravelBeelCommand;
 
 class LaravelBeelServiceProvider extends PackageServiceProvider
 {
