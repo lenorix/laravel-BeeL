@@ -29,36 +29,39 @@ The config file is `config/beel.php`. It controls automatic route registration a
 
 ## Configure and use the client
 
-The BeeL API key, company UUID, and base URL are application service settings. The manager resolves them and creates a normal SDK client:
+The BeeL API key, company UUID, and base URL are application service settings. Resolve `BeelManager` from the container to create a normal SDK client:
 
 ```php
-$beel = app(\Lenorix\LaravelBeel\BeelManager::class)->client();
+use Lenorix\LaravelBeel\BeelManager;
+
+$beel = app(BeelManager::class)->client();
 $rawClient = $beel->raw;
 ```
 
-The facade resolves to the same manager:
+The manager can also create a company scope using the configured `company_id`:
 
 ```php
-$beel = LaravelBeel::client();
+$company = app(BeelManager::class)->company();
+$invoice = $company->invoices->create($request);
 ```
 
-For company-scoped operations, get a scope using the configured `company_id` or pass a UUID explicitly:
+Or pass a UUID explicitly:
 
 ```php
 $company = $beel->company(config('services.beel.company_id'));
 $invoice = $company->invoices->create($request);
 ```
 
-Or use the manager convenience method, which resolves the company UUID from configuration:
+`LaravelBeel` is also available as a facade to the same manager, if preferred:
 
 ```php
-$company = LaravelBeel::company();
+$beel = LaravelBeel::client();
 ```
 
 The manager creates a fresh SDK client each time `client()` is called and does not retain request state. An API key can optionally override the configured key for a particular client:
 
 ```php
-$beel = LaravelBeel::client(apiKey: $customApiKey);
+$beel = app(BeelManager::class)->client(apiKey: $customApiKey);
 ```
 
 Company scopes expose the SDK's resource objects directly, plus `scope` (the original SDK scope) and `raw` (the generated client for endpoints not covered by resource wrappers). `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
@@ -66,7 +69,7 @@ Company scopes expose the SDK's resource objects directly, plus `scope` (the ori
 Passing per-tenant credentials is also supported when an application needs it, but is optional:
 
 ```php
-$company = LaravelBeel::company(
+$company = app(BeelManager::class)->company(
     apiKey: $tenant->beel_api_key,
     companyId: $tenant->beel_company_id,
 );
