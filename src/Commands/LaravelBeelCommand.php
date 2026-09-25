@@ -1,12 +1,12 @@
 <?php
 
-namespace VendorName\Skeleton\Commands;
+namespace Lenorix\LaravelBeel\Commands;
 
 use Illuminate\Console\Command;
 
-class SkeletonCommand extends Command
+class LaravelBeelCommand extends Command
 {
-    public $signature = 'skeleton';
+    public $signature = 'laravel-beel';
 
     public $description = 'My command';
 
