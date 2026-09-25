@@ -81,7 +81,7 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 ## Webhooks
 
-By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header, dispatches `BeelWebhookReceived`, and responds with 202. Invalid signatures return 401. The event provides the event `type`, its `data`, and the complete `payload`; listeners can implement processing or queue work.
+By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header, and responds with 202. Invalid signatures return 401. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `type`, its `data`, and the complete `payload`; listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
 
 ```php
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
@@ -96,7 +96,7 @@ Disable the automatic route with `register_webhook_route => false` to register a
 ## Requirements
 
 - PHP 8.4+
-- Laravel 11, 12, or 13
+- Laravel 11.23+, 12, or 13 (webhook processing uses `defer()`, added in Laravel 11.23)
 - `lenorix/beel-sdk` 0.2+
 
 ## License

@@ -1,8 +1,12 @@
 <?php
 
+use Illuminate\Http\Request;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\LaravelBeel\Http\Controllers\BeelWebhookController;
 
 function signBeelPayload(string $payload, string $secret, ?int $timestamp = null): string
 {
@@ -90,4 +94,30 @@ it('rejects a valid signature over a payload missing type or data', function () 
 
 it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();
+});
+
+it('does not dispatch the event until the deferred callback runs', function () {
+    Event::fake();
+
+    $payload = json_encode(['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]);
+    $signature = signBeelPayload($payload, 'test-webhook-secret');
+
+    $request = Request::create('/beel/webhook', 'POST', server: [
+        'HTTP_BeeL-Signature' => $signature,
+        'CONTENT_TYPE' => 'application/json',
+    ], content: $payload);
+
+    $controller = app(BeelWebhookController::class);
+    $secrets = app(WebhookSecretResolver::class);
+
+    $response = $controller($request, $secrets);
+
+    expect($response->getStatusCode())->toBe(202);
+    // Nothing has run the deferred callback collection yet, so the event must not have fired.
+    Event::assertNotDispatched(BeelWebhookReceived::class);
+
+    // This is what Laravel's InvokeDeferredCallbacks middleware runs during kernel termination.
+    app(DeferredCallbackCollection::class)->invoke();
+
+    Event::assertDispatched(BeelWebhookReceived::class);
 });

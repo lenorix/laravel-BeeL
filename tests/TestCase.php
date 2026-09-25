@@ -2,7 +2,6 @@
 
 namespace Lenorix\LaravelBeel\Tests;
 
-use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Http;
 use Lenorix\LaravelBeel\LaravelBeelServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
@@ -12,10 +11,6 @@ class TestCase extends Orchestra
     protected function setUp(): void
     {
         parent::setUp();
-
-        Factory::guessFactoryNamesUsing(
-            fn (string $modelName) => 'Lenorix\\LaravelBeel\\Database\\Factories\\'.class_basename($modelName).'Factory'
-        );
 
         // Safety net: any HTTP call not explicitly faked by a test fails loudly instead of hitting the network.
         Http::preventStrayRequests();
