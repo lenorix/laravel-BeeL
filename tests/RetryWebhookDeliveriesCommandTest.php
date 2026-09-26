@@ -469,3 +469,14 @@ it('reports the BeeL error code when a retry is rejected', function () {
         ->expectsOutputToContain('INSUFFICIENT_SCOPE')
         ->assertFailed();
 });
+
+it('takes the account from the default credentials when only --api-key is given', function () {
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries', ['--api-key' => 'beel_sk_test_other'])->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d1']);
+    Http::assertSent(fn (ClientRequest $request) => $request->method() === 'POST'
+        && str_contains($request->url(), '/accounts/acc-1/')
+        && $request->hasHeader('Authorization', 'Bearer beel_sk_test_other'));
+});
