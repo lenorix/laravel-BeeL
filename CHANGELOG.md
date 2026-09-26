@@ -20,6 +20,7 @@ First release. Requires PHP 8.4+, Laravel 12 or 13, and `lenorix/beel-sdk` 0.2+.
     - 401: implausible signature headers, rejected from the header alone before resolving the secret or reading the body.
     - 503 (retryable): a well-formed signature that doesn't match, e.g. just after a secret rotation, or no secret configured.
     - 400: a verified payload without `id`, `type` and `data`.
+  - The 503s for a missing secret or a signature mismatch log a throttled warning (never the secret, signature or body).
   - Accepted event ids are remembered in the cache for `webhook_dedupe_seconds` (15 minutes, and at least twice the replay tolerance; configurable store), so a redelivery, a simultaneous duplicate or a replay to another URL gets the same 202 without dispatching the event again. Only verified deliveries are remembered, keyed on the event id and the verifying secret.
   - The replay tolerance is configurable (`webhook_replay_tolerance_seconds`, 300 s by default). The route skips `TrimStrings` and `ConvertEmptyStringsToNull` and is not rate limited, because BeeL never retries a 4xx.
 - `php artisan beel:retry-webhook-deliveries`, a safety net for webhooks that never arrived:

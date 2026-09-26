@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Lenorix\BeelSdk\Exception\WebhookVerificationError;
 use Lenorix\BeelSdk\Webhook\WebhookVerifier;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -28,6 +29,8 @@ final class BeelWebhookController
 
         $secret = $secrets->resolve($request);
         if ($secret === null) {
+            self::warn('secret_missing', 'BeeL webhook secret is not configured; BeeL will retry the delivery.', $request);
+
             return new JsonResponse(['message' => 'BeeL webhook secret is not configured.'], 503);
         }
 
@@ -42,6 +45,8 @@ final class BeelWebhookController
             // This distinguishes the two by WebhookVerifier's exact message text, pinned by a test;
             // if lenorix/beel-sdk ever changes it, this safely falls back to the previous 401.
             if ($exception->getMessage() === 'Invalid BeeL webhook signature.') {
+                self::warn('signature_mismatch', 'BeeL webhook signature does not match the configured secret (was it just rotated?); BeeL will retry the delivery.', $request);
+
                 return new JsonResponse(['message' => 'BeeL webhook signature does not match the configured secret.'], 503);
             }
 
@@ -126,6 +131,34 @@ final class BeelWebhookController
         $key = 'beel:webhook:'.hash_hmac('sha256', $eventId, $secret);
 
         return $cache->add($key, true, max((int) $seconds, 2 * $tolerance)) ? new WebhookClaim($cache, $key) : false;
+    }
+
+    /**
+     * Makes secret misconfiguration visible. Only for requests with a plausible BeeL signature, and at
+     * most once per reason per minute: with no rate limit, forged requests could otherwise flood the
+     * log. Never logs the secret, the signature or the body; the delivery id header is unverified.
+     */
+    private static function warn(string $reason, string $message, Request $request): void
+    {
+        $store = config('beel.webhook_dedupe_store');
+        $firstThisMinute = rescue(
+            fn () => Cache::store(is_string($store) && $store !== '' ? $store : null)->add("beel:webhook:warned:{$reason}", true, 60),
+            true,
+            false,
+        );
+
+        if (! $firstThisMinute) {
+            return;
+        }
+
+        $webhookKey = $request->route('beelWebhookKey');
+        $deliveryId = $request->header('BeeL-Delivery-Id');
+
+        Log::warning($message, [
+            'reason' => $reason,
+            'webhook_key' => is_string($webhookKey) ? mb_substr($webhookKey, 0, 64) : null,
+            'unverified_delivery_id' => is_string($deliveryId) ? mb_substr($deliveryId, 0, 64) : null,
+        ]);
     }
 
     private static function received(): JsonResponse

@@ -76,6 +76,7 @@ Flow of `POST /beel/webhook/{beelWebhookKey?}`:
 Notes:
 
 - No rate limiting on purpose: BeeL does not retry 4xx responses, so throttling would drop legitimate events. Do not add throttle, auth or CSRF middleware to this route.
+- The 503s for a missing secret and for a signature mismatch log a warning (`reason` `secret_missing` / `signature_mismatch`, the webhook key and the unverified `BeeL-Delivery-Id`), at most once per reason per minute; 401s are not logged. Watch for these warnings after rotating a secret.
 - The 503-vs-401 split for step 3 is decided by `WebhookVerifier`'s exact exception message, since it carries no error code. If a `lenorix/beel-sdk` update changes that wording, the controller safely falls back to `401`.
 - The route skips `TrimStrings` and `ConvertEmptyStringsToNull` so the body is not parsed before verification.
 - Listeners run inside the request, before the 202 (BeeL gives up after 10 seconds): keep them light and dispatch queued jobs for real work. A failure to push the job surfaces as a 503 and BeeL retries.

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
@@ -365,4 +366,46 @@ it('answers 503 when a listener fails and lets BeeL\'s retry process the event a
     $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
 
     expect($calls)->toBe(2);
+});
+
+it('logs a warning when a plausible signature does not match the secret, without leaking it', function () {
+    Log::spy();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'old-secret'), 'BeeL-Delivery-Id' => 'del_1'])
+        ->assertStatus(503);
+
+    Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message, array $context) => $context['reason'] === 'signature_mismatch'
+        && $context['webhook_key'] === 'tenant-a'
+        && $context['unverified_delivery_id'] === 'del_1'
+        && ! str_contains($message.json_encode($context), 'test-webhook-secret'));
+});
+
+it('logs a warning when no webhook secret is configured', function () {
+    config()->set('services.beel.webhook_secret', null);
+    Log::spy();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'whatever')])->assertStatus(503);
+
+    Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message, array $context) => $context['reason'] === 'secret_missing');
+});
+
+it('does not log requests rejected by the header pre-filter', function () {
+    Log::spy();
+
+    $this->postJson('/beel/webhook', ['id' => 'evt_1'], ['BeeL-Signature' => 'garbage'])->assertStatus(401);
+
+    Log::shouldNotHaveReceived('warning');
+});
+
+it('logs at most one warning per reason per minute, so forged traffic cannot flood the log', function () {
+    Log::spy();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    foreach (range(1, 3) as $i) {
+        $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, "wrong-{$i}")])->assertStatus(503);
+    }
+
+    Log::shouldHaveReceived('warning')->once();
 });
