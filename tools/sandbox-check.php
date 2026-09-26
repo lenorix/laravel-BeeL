@@ -1,0 +1,117 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Manual check of the package against BeeL's real sandbox. NOT part of the test suite: tests never
+ * reach a real service. Run it by hand before a release, or after BeeL changes its API:
+ *
+ *     BEEL_SANDBOX_KEY=beel_sk_test_... BEEL_SANDBOX_COMPANY_ID=<uuid> php tools/sandbox-check.php
+ *
+ * It only reads (GET requests, plus downloading one invoice PDF to a temporary directory), refuses
+ * live keys, and reports:
+ * - whether the SDK parses BeeL's real responses through the package;
+ * - fields BeeL returns that BeelFake doesn't fake, and fields BeelFake fakes that BeeL no longer
+ *   returns (the fakes drifting from the API);
+ * - whether storePdf() stores a real PDF.
+ */
+
+use Illuminate\Http\Client\Events\ResponseReceived;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
+use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\LaravelBeelServiceProvider;
+use Lenorix\LaravelBeel\Testing\BeelFake;
+use Orchestra\Testbench\Foundation\Application;
+
+require dirname(__DIR__).'/vendor/autoload.php';
+
+$key = getenv('BEEL_SANDBOX_KEY') ?: '';
+$companyId = getenv('BEEL_SANDBOX_COMPANY_ID') ?: null;
+
+if (! str_starts_with($key, 'beel_sk_test_')) {
+    fwrite(STDERR, "Set BEEL_SANDBOX_KEY to a sandbox key (beel_sk_test_...). Live keys are refused.\n");
+    exit(2);
+}
+
+$app = Application::create();
+$app['config']->set('services.beel.key', $key);
+$app['config']->set('services.beel.company_id', $companyId);
+$app['config']->set('filesystems.disks.sandbox-check', ['driver' => 'local', 'root' => sys_get_temp_dir().'/beel-sandbox-check-'.getmypid()]);
+$app->register(LaravelBeelServiceProvider::class);
+
+$failures = 0;
+$report = function (string $status, string $message) use (&$failures): void {
+    $failures += $status === 'FAIL' ? 1 : 0;
+    echo str_pad("[{$status}]", 8).$message.PHP_EOL;
+};
+
+// Raw JSON bodies by path, to compare real field names with BeelFake's.
+$bodies = [];
+Event::listen(function (ResponseReceived $event) use (&$bodies): void {
+    if (str_contains($event->response->header('Content-Type'), 'json')) {
+        $bodies[(string) parse_url($event->request->url(), PHP_URL_PATH)] = $event->response->json();
+    }
+});
+
+/** @param array<string, mixed> $real @param array<string, mixed> $fake */
+$compare = function (string $what, array $real, array $fake) use ($report): void {
+    $new = array_diff(array_keys($real), array_keys($fake));
+    $gone = array_diff(array_keys($fake), array_keys($real));
+    $report($new === [] && $gone === [] ? 'OK' : 'DRIFT', "{$what} fields".($new !== [] ? '; BeeL also returns: '.implode(', ', $new) : '').($gone !== [] ? '; BeelFake has, BeeL did not return: '.implode(', ', $gone) : ''));
+};
+
+$step = function (string $what, callable $run) use ($report): mixed {
+    try {
+        $result = $run();
+        $report('OK', $what);
+
+        return $result;
+    } catch (Throwable $e) {
+        $report('FAIL', "{$what}: ".$e::class.': '.$e->getMessage());
+
+        return null;
+    }
+};
+
+$beel = $app->make(BeelManager::class);
+
+$identity = $step('identity parses (me->identity())', fn () => $beel->client()->me->identity());
+if ($identity !== null) {
+    echo '        account '.$identity->getAccountId().', environment '.$identity->getCredential()->getEnvironment().PHP_EOL;
+    $compare('identity', $bodies['/api/v1/me/identity']['data'] ?? [], BeelFake::identity());
+}
+
+$step('tax types catalogue parses', fn () => $beel->client()->catalogs->taxTypes());
+
+if ($companyId === null) {
+    $report('SKIP', 'company checks: set BEEL_SANDBOX_COMPANY_ID');
+} else {
+    $company = $beel->company();
+    $step('issuing readiness parses', fn () => $company->issuingReadiness());
+
+    $invoices = $step('invoices list parses', fn () => $company->invoices->list(['limit' => 5])->getInvoices());
+    $rawInvoice = $bodies["/api/v1/companies/{$companyId}/invoices"]['data']['invoices'][0] ?? null;
+    is_array($rawInvoice) ? $compare('invoice', $rawInvoice, BeelFake::invoice()) : $report('SKIP', 'invoice fields: the company has no invoices');
+
+    $step('customers list parses', fn () => $company->customers->list(['limit' => 5]));
+    $rawCustomer = $bodies["/api/v1/companies/{$companyId}/customers"]['data']['customers'][0] ?? null;
+    is_array($rawCustomer) ? $compare('customer', $rawCustomer, BeelFake::customer()) : $report('SKIP', 'customer fields: the company has no customers');
+
+    $issued = collect($invoices ?? [])->first(fn ($invoice) => $invoice->getStatus() !== 'DRAFT');
+    if ($issued === null) {
+        $report('SKIP', 'storePdf(): no issued invoice among the first five');
+    } else {
+        $step("storePdf() of invoice {$issued->getId()}", function () use ($company, $issued) {
+            $path = $company->invoices->storePdf($issued->getId(), 'check.pdf', disk: 'sandbox-check', overwrite: true);
+            $disk = Storage::disk('sandbox-check');
+            $ok = str_starts_with((string) $disk->get($path), '%PDF-') && $disk->size($path) > 0;
+            $disk->deleteDirectory('');
+
+            return $ok ?: throw new UnexpectedValueException('the stored file is not a PDF');
+        });
+    }
+}
+
+echo PHP_EOL.($failures === 0 ? 'No failures.' : "{$failures} failure(s).").PHP_EOL;
+exit($failures === 0 ? 0 : 1);

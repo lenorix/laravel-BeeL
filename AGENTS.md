@@ -14,6 +14,7 @@ Run all three before every commit. The `quality` workflow also enforces line cov
 
 ## Hard rules
 
+- **Before a release**, run `tools/sandbox-check.php` by hand with a sandbox key: read-only, refuses live keys, and reports whether the SDK parses BeeL's real responses and where `BeelFake` has drifted from them.
 - **Tests never reach a real service.** `Http::preventStrayRequests()` is on in `tests/TestCase.php`. Fake BeeL with `Http::fake()` and `Testing\BeelFake`. A one-off probe against a local server (for example a benchmark) goes in a temporary file that is deleted afterwards, never in the suite.
 - **Secrets never leak:**
   - never print or log a webhook secret (the only exception is `RotatedWebhookSecretNotStored`);
