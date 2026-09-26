@@ -424,3 +424,31 @@ it('never applies --webhook-id across the accounts of the provider', function ()
     expect(retriedDeliveryIds())->toBe(['d2']);
     Http::assertSent(fn (ClientRequest $request) => str_contains($request->url(), '/accounts/acc-1/'));
 });
+
+it('sends an idempotency key per delivery so overlapping runs never make BeeL redeliver twice', function () {
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    Http::assertSent(fn (ClientRequest $request) => $request->method() === 'POST'
+        && $request->hasHeader('Idempotency-Key', 'beel-webhook-retry-d1'));
+});
+
+it('can restrict the automatic schedule to one server', function () {
+    config()->set('beel.webhook_delivery_retry.schedule', '*/15 * * * *');
+    config()->set('beel.webhook_delivery_retry.on_one_server', true);
+
+    $event = collect(app(Schedule::class)->events())
+        ->first(fn ($event) => str_contains((string) $event->command, 'beel:retry-webhook-deliveries'));
+
+    expect($event->onOneServer)->toBeTrue();
+});
+
+it('does not restrict the automatic schedule to one server by default', function () {
+    config()->set('beel.webhook_delivery_retry.schedule', '*/15 * * * *');
+
+    $event = collect(app(Schedule::class)->events())
+        ->first(fn ($event) => str_contains((string) $event->command, 'beel:retry-webhook-deliveries'));
+
+    expect($event->onOneServer)->toBeFalse();
+});

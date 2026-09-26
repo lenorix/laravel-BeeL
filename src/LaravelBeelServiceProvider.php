@@ -38,7 +38,11 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
             $cron = config('beel.webhook_delivery_retry.schedule');
 
             if (is_string($cron) && $cron !== '') {
-                $schedule->command(RetryWebhookDeliveriesCommand::class)->cron($cron)->withoutOverlapping();
+                $event = $schedule->command(RetryWebhookDeliveriesCommand::class)->cron($cron)->withoutOverlapping();
+
+                if (config('beel.webhook_delivery_retry.on_one_server', false)) {
+                    $event->onOneServer();
+                }
             }
         });
 

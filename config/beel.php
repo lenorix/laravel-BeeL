@@ -18,6 +18,9 @@ return [
         // Cron expression to schedule the command automatically, e.g. '*/15 * * * *'.
         // null leaves scheduling to the app. Either way `schedule:run` must be running.
         'schedule' => null,
+        // With several servers running the scheduler, run the automatic schedule on only one of them.
+        // Needs a cache store with atomic locks (redis, memcached, database, dynamodb, ...).
+        'on_one_server' => false,
     ],
     'http' => [
         // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries.
