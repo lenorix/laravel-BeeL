@@ -121,17 +121,17 @@ use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 $path = "beel-tmp/{$invoice->beel_invoice_id}.pdf";
 
 Bus::chain([
-    new StoreInvoicePdf($invoice->beel_invoice_id, $path, disk: 'local', overwrite: true),
+    new StoreInvoicePdf($invoice->beel_invoice_id, $path, disk: 's3', overwrite: true),
     function () use ($invoice, $path) {
-        $invoice->addMediaFromDisk($path, 'local')->toMediaCollection('pdf');
-        Storage::disk('local')->delete($path);
+        $invoice->addMediaFromDisk($path, 's3')->toMediaCollection('pdf');
+        Storage::disk('s3')->delete($path);
     },
 ])->catch(function () use ($path) {
-    Storage::disk('local')->delete($path);
+    Storage::disk('s3')->delete($path);
 })->dispatch();
 ```
 
-The second step runs only once the PDF is stored, even if the job had to wait for BeeL. If your queue workers run on several servers, use a shared disk (e.g. `s3`) instead of `local`.
+The second step runs only once the PDF is stored, even if the job had to wait for BeeL. The temporary file goes to a shared disk (`s3` here), so it works even when queue workers run on different servers.
 
 ## Testing
 
