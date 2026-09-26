@@ -6,13 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4+.
+First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
 
 ### Added
 
 - `BeelManager` (and the `LaravelBeel` facade) to build `lenorix/beel-sdk` clients: `client()`, `company()` returning `BeelCompany`, and `account()` returning `BeelAccount`. Both scopes expose the SDK's resources plus `scope` and `raw`.
 - Credentials from `config/services.php` (`services.beel.key`, `company_id`, `account_id`) by default. Explicit arguments always win. Bind `Contracts\CredentialsResolver` to take the defaults from anywhere else, such as a settings table or the current tenant; it is resolved on every call.
-- Reported exceptions that wrap a BeeL error get its `context()` (`request_id`, `api_code`, `status_code`, `retry_after`, `details`) in their log context, as Laravel already does for the BeeL error itself.
+- Reported exceptions that wrap a BeeL error get its `context()` (`request_id`, `api_code`, `status_code`, `retry_after`; never `details`, which can echo submitted NIFs or amounts) in their log context, as Laravel already does for the BeeL error itself.
 - All SDK traffic goes through Laravel's HTTP client, so HTTP events, `Http::fake()` and Guzzle options apply. Configurable timeouts and retries on connection errors, 429 and 5xx, honouring a 429's `Retry-After` (capped at 60 s). The SDK keeps adding `Idempotency-Key` to POST requests.
 - Webhook endpoint `POST /beel/webhook/{beelWebhookKey?}` that verifies the `BeeL-Signature` HMAC against the raw body and answers 202:
   - It dispatches `Events\BeelWebhookReceived` before answering (a failing listener answers 503 so BeeL retries), with `id`, `type`, `data`, `payload`, `companyId`, `accountId`, `webhookKey`, `isTest()` and `typed()` (the SDK's typed `WebhookEvent`, built lazily)`.

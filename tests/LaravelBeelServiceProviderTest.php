@@ -52,7 +52,7 @@ it('adds the BeeL request id, error code and status to the log context of report
     config()->set('services.beel.key', 'beel_sk_test_fake');
     config()->set('services.beel.company_id', 'company-1');
     config()->set('beel.http.retries', 0);
-    Http::fake(['*' => BeelFake::error(422, 'EMISSION_NOT_READY')]);
+    Http::fake(['*' => BeelFake::error(422, 'EMISSION_NOT_READY', details: ['nif' => 'B12345674'])]);
 
     try {
         app(BeelManager::class)->company()->invoices->issue('inv-1');
@@ -65,5 +65,6 @@ it('adds the BeeL request id, error code and status to the log context of report
 
     expect($handler->buildContextForException($error))->toMatchArray($expected)
         ->and($handler->buildContextForException(new RuntimeException('Issuing failed', previous: new LogicException('step', previous: $error))))->toMatchArray($expected)
+        ->and($handler->buildContextForException($error))->not->toHaveKey('details') // may echo submitted NIFs or amounts
         ->and($handler->buildContextForException(new RuntimeException('unrelated')))->not->toHaveKey('request_id');
 });

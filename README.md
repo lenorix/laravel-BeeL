@@ -140,7 +140,7 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 
 - PHP 8.4+
 - Laravel 13
-- `lenorix/beel-sdk` 0.4+
+- `lenorix/beel-sdk` 0.4.1+
 
 ## License
 
