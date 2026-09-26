@@ -21,6 +21,19 @@ use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 
+/**
+ * Safety net for webhook deliveries that never reached the app: BeeL retries a failed delivery only
+ * 5 times over ~75 s, and never after a 4xx. For every event with no successful attempt, first
+ * attempted within max_age_minutes and whose latest attempt is at least 2 minutes old, it asks BeeL
+ * to redeliver it (idempotently, keyed on the delivery attempt), so it goes through the normal
+ * verified endpoint.
+ *
+ * Events reaching max_attempts dispatch BeelWebhookDeliveryAbandoned; subscriptions BeeL
+ * deactivated dispatch BeelWebhookSubscriptionInactive. Both repeat on every run while the
+ * condition lasts, and the command then exits with failure. It checks the CredentialsResolver's
+ * account, or every account a bound WebhookRetryAccounts returns. The key needs webhooks:read and
+ * webhooks:write.
+ */
 final class RetryWebhookDeliveriesCommand extends Command
 {
     protected $signature = 'beel:retry-webhook-deliveries
