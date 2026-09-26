@@ -154,12 +154,17 @@ Tests never reach BeeL: all traffic goes through Laravel's HTTP client. `BeelFak
 use Lenorix\LaravelBeel\Testing\BeelFake;
 
 Http::preventStrayRequests();
-Http::fake([
-    '*/invoices/*' => BeelFake::ok(BeelFake::invoice(['status' => 'DRAFT'])),
-    '*/customers*' => BeelFake::page('customers', [BeelFake::customer()]),
-    '*/issue' => BeelFake::error(422, 'EMISSION_NOT_READY'),
-]);
+
+BeelFake::api()
+    ->createInvoice(BeelFake::invoice(['status' => 'DRAFT']))
+    ->issueInvoice(BeelFake::error(422, 'EMISSION_NOT_READY'))  // answers in order,
+    ->issueInvoice(BeelFake::invoice())                          // the last one repeats
+    ->listCustomers([BeelFake::customer()])
+    ->invoicePdf()                                               // the PDF link and its download
+    ->fake();
 ```
+
+It fakes operations by name, so your tests don't depend on BeeL's routes. For anything else, `->on('GET', '/v1/companies/{company}/series', ...)` or plain `Http::fake()` with `BeelFake::ok()`, `page()` and `error()`.
 
 To test your webhook listeners, use the `InteractsWithBeelWebhooks` trait. It posts a correctly signed delivery:
 

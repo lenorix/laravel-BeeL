@@ -24,6 +24,12 @@ final class BeelFake
 {
     public const REQUEST_ID = 'f4a5b6c7-d8e9-4f0a-9b2c-3d4e5f6a7b8c';
 
+    /** Fakes BeeL operations by name (`->issueInvoice(...)`, `->listCustomers(...)`); see BeelApiFake. */
+    public static function api(): BeelApiFake
+    {
+        return new BeelApiFake;
+    }
+
     /** A successful response: `{success: true, data: ..., meta}`. */
     public static function ok(array $data, int $status = 200): PromiseInterface
     {

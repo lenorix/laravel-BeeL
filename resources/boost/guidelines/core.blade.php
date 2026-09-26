@@ -44,7 +44,7 @@ foreach ($company->customers->all() as $customer) {} // every page, lazily
 ### Diagnosing and testing
 
 - `php artisan beel:check` diagnoses the setup (read-only); `--api-key`, `--company-id` and `--account-id` check one tenant.
-- Tests must never reach BeeL: `Http::preventStrayRequests()` plus `Http::fake()` with `Lenorix\LaravelBeel\Testing\BeelFake` responses (`BeelFake::ok(BeelFake::invoice())`, `BeelFake::page(...)`, `BeelFake::error(422, 'VALIDATION_ERROR')`). Post signed webhooks with the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait (`$this->postBeelWebhook('invoice.issued')`).
+- Tests must never reach BeeL: `Http::preventStrayRequests()` plus `Http::fake()` faked by operation name: `Lenorix\LaravelBeel\Testing\BeelFake::api()->issueInvoice(BeelFake::invoice())->listCustomers([BeelFake::customer()])->fake()` (answers in order, `BeelFake::error(422, 'VALIDATION_ERROR')` for errors). Post signed webhooks with the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait (`$this->postBeelWebhook('invoice.issued')`).
 
 ### Out of scope
 

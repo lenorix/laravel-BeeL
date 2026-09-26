@@ -231,7 +231,10 @@ class SyncVerifactuStatus implements ShouldQueue
 
 ## Testing
 
-- `Http::preventStrayRequests()` in the base test case and `Http::fake([...])` per test, with responses from `Lenorix\LaravelBeel\Testing\BeelFake` (shaped like BeeL's OpenAPI examples):
+- `Http::preventStrayRequests()` in the base test case. Prefer faking by operation name with `BeelFake::api()` (`Testing\BeelApiFake`), which knows BeeL's routes:
+  - `listInvoices($items)`, `getInvoice($invoice, ?id)`, `createInvoice()` (201), `issueInvoice()`, `voidInvoice()`, `createCorrectiveInvoice()` (201), `sendInvoice()`, `invoicePdf($contents|$response, ?id)` (the link and its download, so `storePdf()` works), `listCustomers()`, `getCustomer()`, `createCustomer()`, `listProducts()`, `createProduct()`, `issuingReadiness()`, `identity()`, `listWebhookSubscriptions()`, `listManagedAccounts()`; `on($method, '/v1/companies/{company}/...', $response)` for the rest; then `->fake()`.
+  - Arrays get BeeL's envelope (list operations take items and answer one page); a `PromiseInterface` (e.g. `BeelFake::error()`, `Http::response(null, 202)`) is answered as is. Registering the same operation again queues answers in order; the last repeats. `id:` narrows to one resource. Unmatched requests fall through to other fakes and stray prevention.
+- Or `Http::fake([...])` with responses from `Lenorix\LaravelBeel\Testing\BeelFake` (shaped like BeeL's OpenAPI examples):
   - `BeelFake::ok(array $data, int $status = 200)`: `{success, data, meta.request_id}`.
   - `BeelFake::page(string $key, array $items, bool $hasNext = false, int $page = 1, int $perPage = 20)`: `data.{$key}` plus `pagination` (keys: `invoices`, `customers`, `products`, `webhooks`, `deliveries`, ...). `cursorPage($key, $items, ?$nextCursor)` for `accounts`.
   - `BeelFake::error(int $status, string $code, ?string $message = null, array $details = [], ?int $retryAfter = null)`: surfaces as the matching `BeelApiError` subclass with `apiCode`, `details`, `requestId` = `BeelFake::REQUEST_ID`, `retryAfter`. 429 and 5xx are retried `beel.http.retries` times: `Sleep::fake()` or set retries to 0.
