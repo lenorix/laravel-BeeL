@@ -38,7 +38,7 @@ $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoi
 ### Webhooks
 
 - The package registers `POST /beel/webhook` (config `beel.webhook_path`), verifies the `BeeL-Signature` HMAC with `services.beel.webhook_secret`, answers 202 and then dispatches `Lenorix\LaravelBeel\Events\BeelWebhookReceived` (`$event->id`, `->type`, `->data`, `->payload`) after the response.
-- Do the real work in a queued listener (`ShouldQueue` with `$tries` and `backoff()`). BeeL may redeliver an event, so deduplicate on `$event->id`. Ignore deliveries where `$event->payload['test']` is true. Route multi-company apps on `$event->payload['company_id']`.
+- Do the real work in a queued listener (`ShouldQueue` with `$tries` and `backoff()`). BeeL may redeliver an event, so deduplicate on `$event->id`. Ignore deliveries where `$event->isTest()` is true. Route multi-company apps on `$event->companyId`.
 - BeeL does not retry deliveries answered with a 4xx. Never put rate limiting, auth or CSRF middleware in front of the webhook route. A wrong secret (401) loses events: recover them promptly with `$account->webhooks->listDeliveries()` and `->retryDelivery()`, since BeeL keeps only the last 50 delivery logs.
 - With a custom `WebhookSecretResolver`, choose the secret from trusted request metadata (route, host), never from the unverified payload.
 

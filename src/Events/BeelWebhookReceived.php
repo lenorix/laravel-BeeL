@@ -6,6 +6,9 @@ namespace Lenorix\LaravelBeel\Events;
 
 final class BeelWebhookReceived
 {
+    /** BeeL company UUID the event belongs to, when the event carries one (not all event types do). */
+    public readonly ?string $companyId;
+
     /**
      * @param  string  $id  BeeL's event id. BeeL may redeliver the same event, so use this to deduplicate.
      * @param  array<string, mixed>  $payload
@@ -15,5 +18,14 @@ final class BeelWebhookReceived
         public readonly string $type,
         public readonly array $data,
         public readonly array $payload,
-    ) {}
+    ) {
+        $companyId = $payload['company_id'] ?? null;
+        $this->companyId = is_string($companyId) ? $companyId : null;
+    }
+
+    /** True only for test deliveries triggered from the BeeL dashboard, never for live events. */
+    public function isTest(): bool
+    {
+        return ($this->payload['test'] ?? false) === true;
+    }
 }

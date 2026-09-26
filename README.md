@@ -92,13 +92,13 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 ## Webhooks
 
-By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Invalid signatures return 401. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `id`, its `type`, its `data`, and the complete `payload`; listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
+By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Invalid signatures return 401. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` it belongs to (when the event type carries one), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard); listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
 
 ```php
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event): void {
-    // $event->id, $event->type, $event->data, $event->payload
+    // $event->id, $event->type, $event->data, $event->payload, $event->companyId, $event->isTest()
 });
 ```
 
@@ -124,9 +124,8 @@ class ProcessBeelWebhook implements ShouldQueue
 
     public function handle(BeelWebhookReceived $event): void
     {
-        // $event->payload['test'] is true only for test deliveries triggered from the BeeL dashboard.
         // Skip (or route to a separate handler) test events so they never touch production side effects.
-        if ($event->payload['test'] ?? false) {
+        if ($event->isTest()) {
             return;
         }
 

@@ -94,7 +94,7 @@ class HandleBeelWebhook implements ShouldQueue
 
     public function handle(BeelWebhookReceived $event): void
     {
-        if ($event->payload['test'] ?? false) {
+        if ($event->isTest()) {
             return; // dashboard test delivery
         }
 
@@ -111,7 +111,7 @@ class HandleBeelWebhook implements ShouldQueue
             }
 
             match ($event->type) {
-                WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->payload['company_id'] ?? null, $event->data),
+                WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->companyId, $event->data),
                 WebhookEventType::INVOICE_VOIDED->value => $this->markVoided($event->data),
                 default => null,
             };
