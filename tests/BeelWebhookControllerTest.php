@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -138,6 +139,19 @@ it('rejects a valid signature over a payload missing id, type, or data', functio
 
 it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();
+});
+
+it('does not register the webhook route when disabled', function () {
+    // The route file runs once at boot, before a test body can change config, so evaluate it again
+    // here against a scratch router instead of rebooting the whole application.
+    config()->set('beel.register_webhook_route', false);
+
+    $router = new Router(app('events'), app());
+    Route::swap($router);
+    require dirname(__DIR__).'/routes/beel.php';
+    $router->getRoutes()->refreshNameLookups(); // named routes are only indexed by name after this
+
+    expect($router->has('beel.webhook'))->toBeFalse();
 });
 
 it('rejects a validly signed webhook older than the configured replay tolerance', function () {
