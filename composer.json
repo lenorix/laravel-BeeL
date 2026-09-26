@@ -42,8 +42,7 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Lenorix\\LaravelBeel\\Tests\\": "tests/",
-            "Workbench\\App\\": "workbench/app/"
+            "Lenorix\\LaravelBeel\\Tests\\": "tests/"
         }
     },
     "scripts": {
