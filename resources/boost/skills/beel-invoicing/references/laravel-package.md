@@ -32,6 +32,9 @@ Verified against the package source on 2026-09-26.
 | `webhook_delivery_retry.max_attempts` | `8` | Give up after this many attempts (automatic ones included) |
 | `webhook_delivery_retry.schedule` | `null` | Cron expression to auto-schedule `beel:retry-webhook-deliveries` |
 | `webhook_delivery_retry.on_one_server` | `false` | Add `onOneServer()` to that schedule (needs a lock-capable cache) |
+| `pdf.buffer_bytes` | `65536` | `storePdf()` read size; memory stays about this whatever the PDF's size |
+| `pdf.read_timeout` | `30` | Seconds without a byte before a PDF download is abandoned |
+| `pdf.attempts` | `3` | Full `storePdf()` attempts, each with a new URL |
 
 ## BeelManager (singleton) and the `LaravelBeel` facade
 
@@ -48,7 +51,9 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 - Property access (`$company->invoices`) and method calls (`$company->issuingReadiness()`) are forwarded to the scope; unknown properties throw `LogicException`.
 - Company resources: `invoices`, `customers`, `products`, `series`, `recurringInvoices`, `paymentConnections`, `taxConfiguration`, `verifactuConfiguration`.
 - Account resources: `companies`, `members`, `invitations`, `webhooks`, `emails`.
-- Resources that are not tied to a company or account (`catalogs`, `nif`, `accounts`) are used directly from `client()`: `$beel->nif->validate($nif)`, `$beel->catalogs->taxTypes()`.
+- Resources that are not tied to a company or account (`catalogs`, `nif`, `accounts`, `me`) are used directly from `client()`: `$beel->nif->validate($nif)`, `$beel->catalogs->taxTypes()`.
+- `withOptions(RequestOptions)` on `BeelCompany`, `BeelAccount` and `$company->invoices` returns the same decorator (with its id, `raw`, and `storePdf()`), typed via `@method`.
+- `BeelCompany` forwards `get()`, `update()`, `delete()`, `fiscalSummary()` and `issuingReadiness()` to the SDK scope, and `BeelAccount` forwards `get()`, `usage()`, `changeAccessLevel()`, `createClaimToken()`, `setOwner()` and `endManagement()`; both are annotated with `@method` for IDEs and static analysis.
 
 ## Managing webhook subscriptions (multi-tenant)
 
@@ -68,8 +73,6 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 `php artisan beel:check` is read-only (GET requests only, no test deliveries) and reports: API key presence and sandbox/live vs `APP_ENV`; `GET /v1/me/identity` (account, environment, and the key's scopes, which that endpoint returns without needing any scope) vs `services.beel.account_id`; the default company's `issuingReadiness()` blockers; missing `webhooks:read`/`webhooks:write`; whether an active HTTPS subscription points at `APP_URL` + `webhook_path` (per-tenant sub-paths count; trailing slashes ignored) and that no two subscriptions share a URL; for integrator keys (`accounts:*` scopes), a note and a warning for each matching subscription lacking the provisioner events; the webhook secret (default resolver only); and the dedupe store (`array`/`null` error, `file` warning). Errors exit 1, warnings exit 0.
 
-`BeelCompany` forwards `get()`, `update()`, `delete()`, `fiscalSummary()` and `issuingReadiness()` to the SDK scope, and `BeelAccount` forwards `get()`, `usage()`, `changeAccessLevel()`, `createClaimToken()`, `setOwner()` and `endManagement()`; both are annotated with `@method` for IDEs and static analysis.
-
 ## Storing invoice PDFs
 
 `$company->invoices` is `Lenorix\LaravelBeel\BeelCompanyInvoices`: the SDK's `CompanyInvoicesResource` (every method, `schedule`, and `withOptions()` keeps the decorator; the SDK resource is `->resource`) plus:
@@ -83,6 +86,19 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 - `$options` go to the disk (`visibility`, ...); `ContentType` defaults to `application/pdf`.
 - A `ResponseReceived` listener that reads `$response->body()` consumes the stream: `storePdf()` then fails ("empty") instead of storing a broken file.
 - Queued: `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($invoiceId, $path, disk:, overwrite:, options:, companyId:, apiKey:)`. It releases itself for BeeL's `retryAfter` while the PDF is generated, treats an existing file (no `overwrite`) as done, fails at once on non-retryable 4xx (draft, unknown invoice), and lets the queue retry download failures (5 tries, backoff 10/30/60/120 s). Its payload is encrypted (`ShouldBeEncrypted`, needs `APP_KEY`). Tenant-bound `CredentialsResolver`s return null in workers: pass `companyId` and `apiKey`. Don't download inside a webhook listener; dispatch this job instead (e.g. on `invoice.pdf.generated`).
+- Spatie Media Library: chain the job with the `addMediaFromDisk()` step, on a shared disk (workers may run on different servers), and clean up in `catch()`:
+
+  ```php
+  Bus::chain([
+      new StoreInvoicePdf($beelId, $path, disk: 's3', overwrite: true),
+      function () use ($invoice, $path) {
+          $invoice->addMediaFromDisk($path, 's3')->toMediaCollection('pdf');
+          Storage::disk('s3')->delete($path);
+      },
+  ])->catch(fn () => Storage::disk('s3')->delete($path))->dispatch();
+  ```
+
+  Not `addMediaFromUrl()` with the pre-signed URL: it skips the download checks and the URL expires.
 - Testing: fake `*/invoices/{id}/pdf` with `BeelFake::ok(BeelFake::invoicePdf())` and its `download_url` with `BeelFake::pdf($contents)`; use `Storage::fake($disk)` and `Sleep::fake()`.
 
 ## Transport, retries and idempotency
@@ -113,7 +129,6 @@ Notes:
 
 - No rate limiting on purpose: BeeL does not retry 4xx responses, so throttling would drop legitimate events. Do not add throttle, auth or CSRF middleware to this route.
 - The 503s for a missing secret and for a signature mismatch log a warning (`reason` `secret_missing` / `signature_mismatch`, the webhook key and the unverified `BeeL-Delivery-Id`), at most once per reason per minute; 401s are not logged. Watch for these warnings after rotating a secret.
-- The 503-vs-401 split for step 3 is decided by `WebhookVerifier`'s exact exception message, since it carries no error code. If a `lenorix/beel-sdk` update changes that wording, the controller safely falls back to `401`.
 - The route skips `TrimStrings` and `ConvertEmptyStringsToNull` so the body is not parsed before verification.
 - Listeners run inside the request, before the 202 (BeeL gives up after 10 seconds): keep them light and dispatch queued jobs for real work. A failure to push the job surfaces as a 503 and BeeL retries.
 - Lost deliveries: `php artisan beel:retry-webhook-deliveries` groups each subscription's delivery log by `webhook_event_id`, skips events with any successful attempt, and calls `retryDelivery()` on the latest attempt of events first attempted within `beel.webhook_delivery_retry.max_age_minutes` (1440) that have fewer than `max_attempts` (8, automatic attempts included) attempts. Events that reach `max_attempts` are abandoned: it logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned` (`accountId`, `subscriptionId`, `eventId`, `eventType`, `attempts`, `lastDeliveryId`, `lastHttpStatus`, `lastError`, `payload`) on every run while inside the window; listeners should dedupe on `eventId` and recover by re-reading the resource (e.g. `$company->invoices->get($id)`). For deactivated subscriptions (`active: false`, `deactivated_by: beel` after 25 consecutive failures over 48 h) it does not retry; it logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`) for the app to notify or react, and exits with failure when it gives up, a retry fails, or a subscription is inactive. It skips events whose latest attempt is under 2 minutes old (BeeL's own retries finish ~75 s after the first attempt). It uses `services.beel.key`/`account_id` (or `--api-key`/`--account-id`); the key must be created with `webhooks:read` (listing) and `webhooks:write` (retrying), since scopes are fixed at key creation. Options `--account-id`, `--api-key`, `--webhook-id=*`, `--max-age`, `--max-attempts`, `--dry-run`; never pass `--api-key` via `Schedule::command()` (it shows in `ps`). By default it checks the single account of the bound `CredentialsResolver`; to check several accounts (e.g. all tenants) bind `Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts` returning `Lenorix\LaravelBeel\AccountCredentials($accountId, $apiKey)` items; a failing account doesn't stop the others. `--account-id`/`--api-key` check only that account; `--webhook-id` also implies a single account (given or default). Listener exceptions are reported without stopping the run. Schedule it with `beel.webhook_delivery_retry.schedule` (cron, null by default) or `Schedule::command(...)`. BeeL keeps only the last 50 delivery logs, so run it frequently enough to see failures. Retries carry `Idempotency-Key: beel-webhook-retry-{deliveryId}` (via the SDK's `withOptions(new RequestOptions(idempotencyKey: ...))`), so overlapping runs never redeliver the same attempt twice; a `409 IDEMPOTENCY_KEY_PROCESSING` (another run's retry still in flight) is reported as already being retried, not as a failure.
@@ -140,7 +155,9 @@ class RouteBeelWebhook
         }
 
         if ($event->type === WebhookEventType::VERIFACTU_STATUS_UPDATED->value) {
-            SyncVerifactuStatus::dispatch($event->id, $event->companyId, $event->data);
+            $data = $event->typed()->getData(); // WebhookEventDataVeriFactuStatusUpdated
+
+            SyncVerifactuStatus::dispatch($event->id, $event->companyId, $data->getInvoiceId(), $data->getNewStatus());
         }
     }
 }
@@ -151,7 +168,7 @@ class SyncVerifactuStatus implements ShouldQueue
 
     public int $tries = 5;
 
-    public function __construct(public string $eventId, public ?string $companyId, public array $data) {}
+    public function __construct(public string $eventId, public ?string $companyId, public string $invoiceId, public string $newStatus) {}
 
     public function backoff(): array
     {
@@ -172,7 +189,7 @@ class SyncVerifactuStatus implements ShouldQueue
                 return; // already processed
             }
 
-            // ... update the invoice's VERI*FACTU status from $this->data
+            // ... update the invoice's VERI*FACTU status to $this->newStatus
         });
     }
 }

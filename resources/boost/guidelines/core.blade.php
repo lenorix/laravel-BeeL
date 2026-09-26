@@ -1,67 +1,50 @@
-{{-- Laravel BeeL guidelines for AI code assistants. Keep free of Blade echo braces and directives: Boost silently drops a guideline that fails to render. --}}
+{{-- Laravel BeeL guidelines for AI code assistants. Always loaded: keep it short, details go in the beel-invoicing skill. Keep free of Blade echo braces and directives: Boost silently drops a guideline that fails to render. --}}
 ## BeeL invoicing (lenorix/laravel-beel)
 
-- `lenorix/laravel-beel` integrates BeeL (https://docs.beel.es), a Spanish invoicing API with VERI*FACTU built in, into Laravel. It wraps `lenorix/beel-sdk`, an unofficial PHP SDK that is a transitive dependency and ships no guidelines of its own.
-- BeeL numbers and issues invoices, builds the VERI*FACTU hash chain, submits the registros de facturación to the AEAT, returns the QR data, renders PDFs and sends emails. The app decides the fiscal content: invoice type, recipient, lines, taxes, exemptions and corrections.
-- Always activate the `beel-invoicing` skill when working on invoices (facturas), drafts, issuing, corrective invoices (rectificativas), voiding, series, recurring invoices, customers, products, taxes (IVA, IGIC, IPSI, IRPF, recargo de equivalencia), foreign customers, VERI*FACTU or AEAT status, NIF validation, BeeL accounts or companies, invoice PDFs or emails, or BeeL webhooks. The rules below apply even without the skill.
+- `lenorix/laravel-beel` integrates BeeL (https://docs.beel.es), a Spanish invoicing API with VERI*FACTU built in, into Laravel on top of `lenorix/beel-sdk` (an unofficial SDK that ships no guidelines of its own).
+- BeeL numbers and issues invoices, runs VERI*FACTU (hash chain, AEAT submission, QR), renders PDFs and sends emails. The app decides the fiscal content: invoice type, recipient, lines, taxes, exemptions and corrections.
+- Activate the `beel-invoicing` skill for any work on invoices (facturas), corrective invoices (rectificativas), voiding, customers, products, series, taxes (IVA, IGIC, IPSI, IRPF, recargo de equivalencia), VERI*FACTU or AEAT status, NIFs, BeeL accounts or companies, invoice PDFs, BeeL webhooks or tests that fake BeeL. The rules below apply even without it.
 
 ### Getting a client
 
 ```php
 use Lenorix\LaravelBeel\BeelManager;
 
-$beel = app(BeelManager::class)->client();       // Lenorix\BeelSdk\Beel, over Laravel's HTTP client
-$company = app(BeelManager::class)->company();   // company scope from services.beel.company_id
-$account = app(BeelManager::class)->account();   // account scope from services.beel.account_id (optional)
-
-// Credentials resolved at runtime (per tenant or any other reason) instead of config:
+$company = app(BeelManager::class)->company();   // services.beel.company_id; ->account() and ->client() too
 $company = app(BeelManager::class)->company(apiKey: $tenant->beel_api_key, companyId: $tenant->beel_company_id);
 
-$company->invoices->list(['page' => 1]);          // scoped SDK resources: invoices, customers, products, series, ...
-foreach ($company->invoices->all(['limit' => 100]) as $invoice) {} // lazy iteration over every page
+$company->invoices->get($id);                     // SDK resources: invoices, customers, products, series, ...
+foreach ($company->customers->all() as $customer) {} // every page, lazily
 ```
 
-### Rules that must never be broken
+### Rules
 
-- Iterate every page with the resources' `all()` generators instead of hand-written `page` loops. Read the API key's account, environment and scopes with `$beel->me->identity()`; drop to `->raw` only for operations without a resource method.
-
-- Default credentials come from config (`services.beel.*`) through the bound `Lenorix\LaravelBeel\Contracts\CredentialsResolver`. When the app keeps keys elsewhere (database, current tenant), bind its own `CredentialsResolver` instead of passing credentials around or copying them into config at runtime.
-- Get clients only through `BeelManager` or the `LaravelBeel` facade. Never `new Lenorix\BeelSdk\Beel(...)`: that bypasses Laravel's HTTP client, the configured timeouts and retries, and `Http::fake()`.
-- `company_id` and `account_id` are BeeL UUIDs, never a NIF. Sending a NIF where a company id is expected fails.
-- Use company- and account-scoped resources (`$company->invoices`, `$account->members`, ...). Never use the deprecated top-level `$beel->invoices`, `->customers`, `->products`, `->series`, `->configuration` or `->downloadPdf()`: they hit legacy routes BeeL is retiring.
-- Never implement VERI*FACTU yourself: no hash chaining, no registro XML, no XAdES signing, no certificates, no AEAT web service calls. BeeL does all of it.
-- BeeL never recalculates your amounts; what you send is the fiscal truth. Set every line's tax explicitly: `main_tax` (type, percentage, regime_key) is mandatory on normal lines, a 0 % line needs an `exemption_reason`, and an omitted `irpf_rate` inherits the company default, so send `0` explicitly when nothing must be withheld.
-- `issue()` is irreversible: it assigns the definitive number and freezes the invoice. The AEAT submission is asynchronous, so a successful `issue()` does not mean the AEAT accepted it. Read `verifactu.submission_status` (or handle `verifactu.status.updated`); only `REJECTED` needs action.
-- Issued invoices are immutable. Correct them with a corrective invoice (`createCorrective`, codes R1 to R5). Use `void()` only for an invoice that should never have existed; its number is burned forever.
-- Send an `Idempotency-Key` derived from your own domain id on create, issue, void and corrective calls (`$company->invoices->withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: ...))->issue($id)`, or the method's `$headers` argument), and set `external_ref` when an invoice must exist only once per order or payment. The package's automatic retries reuse the same key.
-- An invoice PDF from `getPdf()` is a presigned URL that expires after about 5 minutes. Never store the URL. To keep the PDF, use `$company->invoices->storePdf($invoiceId, $path, disk: 's3')`: it streams it into any Laravel disk with bounded memory, writes atomically and verifies it; it refuses an existing file unless `overwrite: true`. From webhooks or requests, queue it with `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($invoiceId, $path, disk: 's3')` (pass `companyId` and `apiKey` when credentials depend on the tenant). Never download it with `file_get_contents()` or `Http::get()->body()`. Drafts have no fiscal PDF (use `preview()`).
-- The API key prefix picks the environment: `beel_sk_test_` is sandbox, `beel_sk_live_` is production, with the same base URL. A 404 can mean the key and the resource belong to different environments.
-- API errors are `Lenorix\BeelSdk\Exception\BeelApiError` subclasses (`BeelValidationError`, `BeelConflictError`, `BeelNotFoundError`, `BeelAuthError`, `BeelRateLimitError`). Branch on `$e->apiCode`, never on the localized message. Reported BeeL errors already get `request_id`, `api_code` and `status_code` in their log context (also when wrapped); for metrics listen to Laravel's HTTP client events (`ResponseReceived`, `ConnectionFailed`) filtered on BeeL's host. Network failures are `Lenorix\LaravelBeel\LaravelNetworkException` or `LaravelClientException`, not `BeelApiError`.
-- Invoices to foreign customers are still VERI*FACTU invoices (registered with the AEAT, with QR). If the app renders its own invoice document instead of BeeL's PDF, it must print the AEAT QR (from `verifactu.qr_url`) following the rules in the skill.
+- Get clients only through `BeelManager` (or the `LaravelBeel` facade), never `new Lenorix\BeelSdk\Beel(...)`: that skips Laravel's HTTP client, retries and `Http::fake()`. To take default credentials from somewhere other than config, bind `Lenorix\LaravelBeel\Contracts\CredentialsResolver`.
+- `company_id` and `account_id` are BeeL UUIDs, never a NIF.
+- Use company- and account-scoped resources; never the deprecated top-level `$beel->invoices`, `->customers`, `->products`, `->series`, `->configuration` or `->downloadPdf()`.
+- Iterate lists with `all()`, not hand-written `page` loops.
+- Never implement VERI*FACTU yourself (hash chaining, registro XML, signing, AEAT calls): BeeL does it.
+- BeeL never recalculates amounts. Set every line's tax explicitly: `main_tax` (type, percentage, regime_key), an `exemption_reason` on 0 % lines, and `irpf_rate` `0` when nothing is withheld (omitted, it inherits the company default).
+- `issue()` is irreversible and the AEAT submission is asynchronous: read `verifactu.submission_status` or handle `verifactu.status.updated`; only `REJECTED` needs action. Correct issued invoices with `createCorrective()` (R1 to R5); `void()` only an invoice that should never have existed.
+- Send an `Idempotency-Key` derived from your own domain id on create, issue, void and corrective calls: `$company->invoices->withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: 'invoice-issue-'.$id))->issue($id)`. Set `external_ref` when an invoice must exist once per order or payment.
+- Never store the 5-minute URL from `getPdf()`. Store the PDF with `$company->invoices->storePdf($id, $path, disk: 's3')`, or from the queue with `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($id, $path, disk: 's3')`. Never download it with `file_get_contents()` or `Http::get()->body()`.
+- `beel_sk_test_` keys are sandbox, `beel_sk_live_` production (same base URL).
+- Branch on `$e->apiCode` of `Lenorix\BeelSdk\Exception\BeelApiError`, never on the message. `BeelNotReadyError` (HTTP 202, `retryAfter`) is not a `BeelApiError`. Network failures are `Lenorix\LaravelBeel\LaravelNetworkException` / `LaravelClientException`.
+- An app-rendered invoice document for a VERI*FACTU invoice (foreign customers included) must print the AEAT QR from `verifactu.qr_url`, following the skill's rules.
 
 ### Webhooks
 
-- The package registers `POST /beel/webhook/{beelWebhookKey?}` (config `beel.webhook_path`), verifies the `BeeL-Signature` HMAC with `services.beel.webhook_secret`, dispatches `Lenorix\LaravelBeel\Events\BeelWebhookReceived` (`$event->id`, `->type`, `->data`, `->payload`, `->companyId`, `->accountId`, `->webhookKey`) before answering 202; if a listener throws it answers 503 so BeeL retries.
-- Prefer `$event->typed()->getData()` (the SDK's per-type model, e.g. `WebhookEventDataInvoiceIssued`) over reading `$event->data` array keys; it stays an array for event types the SDK doesn't know.
-- Keep `BeelWebhookReceived` listeners light: they run inside the webhook request (BeeL gives up after 10 seconds). Filter and route in the listener, then dispatch a queued job (`ShouldQueue` with `$tries` and `backoff()`) for the real work. BeeL may redeliver an event; the package already drops redeliveries and simultaneous duplicates within `beel.webhook_dedupe_seconds` (15 min) through an atomic `Cache::add()` claim (keyed on the signed event id and the verifying secret, lasting at least twice the replay tolerance), but listeners must still deduplicate on `$event->id` durably (unique index). That claim only works on a cache store with atomic adds shared by every process receiving webhooks: redis, memcached, database or dynamodb (file only for a single server). Never rely on the `array` or `null` stores for it (not atomic, not shared: deduplication silently does nothing); set `beel.webhook_dedupe_store` when the default store is one of them. Ignore deliveries where `$event->isTest()` is true. In single-tenant apps route on `$event->companyId`; in multi-tenant apps identify the tenant by `$event->webhookKey` (the URL segment) and ignore events whose `companyId`/`accountId` don't belong to it. That is only trustworthy when the resolver returns a distinct secret per key and null for unknown or missing keys; with the default resolver any segment is accepted with the config secret.
-- BeeL does not retry deliveries answered with a 4xx. Never put rate limiting, auth or CSRF middleware in front of the webhook route. A signature that doesn't match the configured secret gets a retryable 503 (covers a just-rotated secret); anything else invalid gets a non-retryable 401. To recover events that never arrived, run or schedule `php artisan beel:retry-webhook-deliveries` (or set `beel.webhook_delivery_retry.schedule`): it asks BeeL to redeliver events with no successful attempt, and dispatches `BeelWebhookDeliveryAbandoned` / `BeelWebhookSubscriptionInactive` (plus a log warning and a failure exit code) when it gives up on an event or finds a deactivated subscription; listen to those to alert or resync. Do not dispatch `BeelWebhookReceived` from delivery logs yourself; redelivery keeps BeeL's history accurate and exercises the real endpoint.
-- Multi-tenant webhooks: create, rotate, find or delete each tenant's subscription with `Lenorix\LaravelBeel\BeelWebhookSubscriptions` (`subscribe(store: fn (string $secret) => ..., webhookKey: ..., apiKey: ..., accountId: ...)`). The secret only reaches the `store` callback; persist it (encrypted) where the tenant's `WebhookSecretResolver` reads it. Never create two subscriptions for one URL.
-- Integrators (keys with the privileged `accounts:*` scopes that manage provisioned accounts): a subscription only receives events from its own account unless created with `account_relationship` `managed` or `all` (`--account-relationship=all`, or `accountRelationship: 'all'` in `BeelWebhookSubscriptions::subscribe()`). The provisioner-only events `account.claimed`, `company.created` and `representation.signed`, which only integrators receive, are left out by default: add them with `--provisioner-events` or `events: $subscriptions->allEvents()`. Route managed-account events on `$event->accountRelationship` (`own`/`managed`), `$event->accountId` and `$event->accountExternalRef` (your `external_ref`).
-- To set up the webhook, run `php artisan beel:webhook:subscribe`: it creates the subscription for `APP_URL` + the webhook path and writes the secret to `.env` (never printed); `--rotate` replaces an existing subscription's secret. Do not create a second subscription for the same URL.
-- The secret defaults to `services.beel.webhook_secret`. For one secret per tenant, point each BeeL subscription at `route('beel.webhook', ['beelWebhookKey' => ...])` and bind a `WebhookSecretResolver` that reads `$request->route('beelWebhookKey')`; never choose the secret from the unverified payload.
+- The package verifies `POST /beel/webhook` and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookReceived` before answering 202. Set it up with `php artisan beel:webhook:subscribe`.
+- Listeners run inside the request (BeeL gives up after 10 s): only filter and dispatch a queued job. Skip `$event->isTest()`. Deduplicate durably on `$event->id` (unique index). Prefer `$event->typed()->getData()` over `$event->data` keys.
+- Deduplication needs a shared atomic cache store (redis, memcached, database, dynamodb); with `array` or `null` it silently does nothing, so set `beel.webhook_dedupe_store`.
+- Never put rate limiting, auth or CSRF middleware on the webhook route: BeeL doesn't retry 4xx.
+- Multi-tenant: one subscription per tenant with `Lenorix\LaravelBeel\BeelWebhookSubscriptions`, a `WebhookSecretResolver` that picks the secret from the URL segment (never from the payload), and listeners that identify the tenant by `$event->webhookKey`.
 
-### Diagnosing
+### Diagnosing and testing
 
-- Run `php artisan beel:check` to diagnose the setup (key and environment, account, company readiness and blockers, key scopes, webhook subscription URL and status, webhook secret, dedupe cache store). It is read-only; errors exit 1.
+- `php artisan beel:check` diagnoses the setup (read-only).
+- Tests must never reach BeeL: `Http::preventStrayRequests()` plus `Http::fake()` with `Lenorix\LaravelBeel\Testing\BeelFake` responses (`BeelFake::ok(BeelFake::invoice())`, `BeelFake::page(...)`, `BeelFake::error(422, 'VALIDATION_ERROR')`). Post signed webhooks with the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait (`$this->postBeelWebhook('invoice.issued')`).
 
-### Testing
+### Out of scope
 
-- Tests must never reach the real BeeL API. All SDK traffic goes through Laravel's HTTP client, so use `Http::fake()` and `Http::preventStrayRequests()`.
-- Build fake responses with `Lenorix\LaravelBeel\Testing\BeelFake` instead of hand-written JSON: `BeelFake::ok(BeelFake::invoice([...]))`, `BeelFake::page('customers', [BeelFake::customer()])`, `BeelFake::error(422, 'VALIDATION_ERROR')`. Faked 429/5xx are retried by the package: use `Sleep::fake()` or set `beel.http.retries` to 0.
-- To test webhook listeners, use the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait: `$this->postBeelWebhook('invoice.issued', $data, $overrides)` posts a correctly signed delivery with a fresh event id. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` signs the exact body you send.
-
-### Not covered by BeeL or this package
-
-- Mandatory B2B electronic invoicing (Ley 18/2022 Crea y Crece, Real Decreto 238/2026), structured formats (UBL, Facturae, CII), Peppol, FACe (public sector) and invoice status reporting. These are separate legal obligations; do not assume BeeL fulfils them.
-- TicketBAI and the foral territories (País Vasco, Navarra), and SII taxpayers: they are outside VERI*FACTU.
-- Tax systems of other countries.
+- Not covered by BeeL or this package: B2B e-invoicing (Crea y Crece, Facturae, UBL, Peppol, FACe), TicketBAI (País Vasco, Navarra), SII, and other countries' tax systems. Do not assume BeeL fulfils them.

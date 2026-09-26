@@ -1,7 +1,7 @@
 ---
 name: beel-invoicing
-description: Build Spanish invoicing features on BeeL with lenorix/laravel-beel and lenorix/beel-sdk. Use for invoices (facturas) and drafts, issuing, corrective invoices (rectificativas R1-R5), voiding (anulación), simplified invoices, proformas, series and numbering, recurring invoices, customers, products, taxes (IVA, IGIC, IPSI, IRPF, recargo de equivalencia, exemptions, regime keys), foreign and EU customers, VERI*FACTU and AEAT submission status and QR codes, NIF validation, BeeL accounts, companies and AEAT representation, invoice PDFs and emails, and BeeL webhooks.
-license: MIT
+description: Build Spanish invoicing features on BeeL with lenorix/laravel-beel and lenorix/beel-sdk. Use for invoices (facturas) and drafts, issuing, corrective invoices (rectificativas R1-R5), voiding (anulación), simplified invoices, proformas, series and numbering, recurring invoices, customers, products, taxes (IVA, IGIC, IPSI, IRPF, recargo de equivalencia, exemptions, regime keys), foreign and EU customers, VERI*FACTU and AEAT submission status and QR codes, NIF validation, BeeL accounts, companies and AEAT representation, storing invoice PDFs on Laravel disks or queues, invoice emails, BeeL webhooks, and tests that fake the BeeL API.
+license: Unlicense
 metadata:
   author: lenorix
 ---
@@ -68,6 +68,33 @@ $invoice->getInvoiceNumber();
 $invoice->getVerifactu()?->getSubmissionStatus(); // PENDING until the AEAT answers asynchronously
 ```
 
+## Workflow: reacting to BeeL
+
+1. Create the subscription with `php artisan beel:webhook:subscribe` (one app) or `BeelWebhookSubscriptions::subscribe()` (one per tenant).
+2. Listen to `Lenorix\LaravelBeel\Events\BeelWebhookReceived`. In the listener, skip `isTest()`, pick the event by `$event->type`, read `$event->typed()->getData()`, and dispatch a queued job. Do nothing slow there.
+3. In the job, deduplicate durably on `$event->id` (unique index) and re-read the invoice from BeeL if you need more than the event carries.
+4. To archive PDFs, dispatch `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf` on `invoice.pdf.generated`.
+5. Schedule `php artisan beel:retry-webhook-deliveries` as a safety net for deliveries that never arrived.
+
+```php
+use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
+
+Event::listen(function (BeelWebhookReceived $event): void {
+    if ($event->isTest()) {
+        return;
+    }
+
+    $data = $event->typed()->getData(); // per-type model, e.g. WebhookEventDataInvoicePdfGenerated
+
+    match ($event->type) {
+        'verifactu.status.updated' => SyncVerifactuStatus::dispatch($event->id, $data->getInvoiceId()),
+        'invoice.pdf.generated' => StoreInvoicePdf::dispatch($data->getInvoiceId(), "invoices/{$data->getInvoiceId()}.pdf", disk: 's3', companyId: $event->companyId),
+        default => null,
+    };
+});
+```
+
 ## Decision guide
 
 - **Wrong data on an issued invoice** (amount, tax, recipient): corrective invoice. `PARTIAL` sends only the difference lines (negative quantities for reductions); `TOTAL` sends no lines and fully replaces the original. Codes: R1 legal error or LIVA art. 80.1, 80.2, 80.6 (returns, discounts), R2 insolvency (concurso), R3 bad debt (incobrable), R4 any other cause, R5 only for simplified invoices.
@@ -80,7 +107,7 @@ $invoice->getVerifactu()?->getSubmissionStatus(); // PENDING until the AEAT answ
 
 Read only what the task needs:
 
-- `references/laravel-package.md`: this package's API, config, transport, errors, webhook endpoint and testing patterns.
+- `references/laravel-package.md`: this package's API, config, transport, errors, PDF storage (`storePdf()`, `StoreInvoicePdf`), webhook endpoint and subscriptions, commands, and testing with `BeelFake`.
 - `references/beel-sdk.md`: every SDK resource method, builders, exceptions, idempotency and response unwrapping.
 - `references/beel-api.md`: BeeL API behaviour, environments, errors, idempotency, accounts and companies, integrators (managed accounts, privileged scopes), invoice lifecycle, taxes, email, PDF and webhook events.
 - `references/verifactu.md`: the VERI*FACTU regulation facts an app still has to respect (scope, deadlines, QR rules for app-rendered invoices, invoice types, corrections).
