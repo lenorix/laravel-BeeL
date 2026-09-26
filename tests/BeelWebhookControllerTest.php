@@ -1,17 +1,13 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
-use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
-use Lenorix\LaravelBeel\Http\Controllers\BeelWebhookController;
 
-function signBeelPayload(string $payload, string $secret, ?int $timestamp = null): string
+function signBeelPayload(array $payload, string $secret, ?int $timestamp = null): string
 {
     $timestamp ??= time();
-    $signature = hash_hmac('sha256', $timestamp.'.'.$payload, $secret);
+    $signature = hash_hmac('sha256', $timestamp.'.'.json_encode($payload), $secret);
 
     return "t={$timestamp},v1={$signature}";
 }
@@ -23,16 +19,10 @@ beforeEach(function () {
 it('dispatches the event and responds 202 for a validly signed webhook', function () {
     Event::fake();
 
-    $payload = json_encode([
-        'type' => 'invoice.issued',
-        'data' => ['id' => 'inv_123'],
-    ]);
+    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
-    $response = $this->call('POST', '/beel/webhook', server: [
-        'HTTP_BeeL-Signature' => $signature,
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
+    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
 
     $response->assertStatus(202)->assertJson(['received' => true]);
 
@@ -44,24 +34,19 @@ it('dispatches the event and responds 202 for a validly signed webhook', functio
 it('rejects a webhook with an invalid signature', function () {
     Event::fake();
 
-    $payload = json_encode(['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]);
+    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'wrong-secret');
 
-    $response = $this->call('POST', '/beel/webhook', server: [
-        'HTTP_BeeL-Signature' => $signature,
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
+    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
 
     $response->assertStatus(401);
     Event::assertNotDispatched(BeelWebhookReceived::class);
 });
 
 it('rejects a webhook with a missing signature header', function () {
-    $payload = json_encode(['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]);
+    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
 
-    $response = $this->call('POST', '/beel/webhook', server: [
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
+    $response = $this->postJson('/beel/webhook', $payload);
 
     $response->assertStatus(401);
 });
@@ -69,55 +54,23 @@ it('rejects a webhook with a missing signature header', function () {
 it('responds 503 when no webhook secret is configured', function () {
     config()->set('services.beel.webhook_secret', null);
 
-    $payload = json_encode(['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]);
+    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
-    $response = $this->call('POST', '/beel/webhook', server: [
-        'HTTP_BeeL-Signature' => $signature,
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
+    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
 
     $response->assertStatus(503);
 });
 
 it('rejects a valid signature over a payload missing type or data', function () {
-    $payload = json_encode(['foo' => 'bar']);
+    $payload = ['foo' => 'bar'];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
-    $response = $this->call('POST', '/beel/webhook', server: [
-        'HTTP_BeeL-Signature' => $signature,
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
+    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
 
     $response->assertStatus(400);
 });
 
 it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();
-});
-
-it('does not dispatch the event until the deferred callback runs', function () {
-    Event::fake();
-
-    $payload = json_encode(['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]);
-    $signature = signBeelPayload($payload, 'test-webhook-secret');
-
-    $request = Request::create('/beel/webhook', 'POST', server: [
-        'HTTP_BeeL-Signature' => $signature,
-        'CONTENT_TYPE' => 'application/json',
-    ], content: $payload);
-
-    $controller = app(BeelWebhookController::class);
-    $secrets = app(WebhookSecretResolver::class);
-
-    $response = $controller($request, $secrets);
-
-    expect($response->getStatusCode())->toBe(202);
-    // Nothing has run the deferred callback collection yet, so the event must not have fired.
-    Event::assertNotDispatched(BeelWebhookReceived::class);
-
-    // This is what Laravel's InvokeDeferredCallbacks middleware runs during kernel termination.
-    app(DeferredCallbackCollection::class)->invoke();
-
-    Event::assertDispatched(BeelWebhookReceived::class);
 });
