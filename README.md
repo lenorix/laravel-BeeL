@@ -1,5 +1,10 @@
 # Laravel BeeL
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/lenorix/laravel-beel.svg?style=flat-square)](https://packagist.org/packages/lenorix/laravel-beel)
+[![Tests](https://github.com/lenorix/laravel-BeeL/actions/workflows/run-tests.yml/badge.svg)](https://github.com/lenorix/laravel-BeeL/actions/workflows/run-tests.yml)
+[![Total Downloads](https://img.shields.io/packagist/dt/lenorix/laravel-beel.svg?style=flat-square)](https://packagist.org/packages/lenorix/laravel-beel)
+[![Plumb score](https://plumbphp.dev/badges/lenorix/laravel-beel/composite.svg)](https://plumbphp.dev/lenorix/laravel-beel)
+
 Laravel integration for [BeeL](https://docs.beel.es), the Spanish invoicing API with VERI\*FACTU built in.
 
 It wraps the [`lenorix/beel-sdk`](https://github.com/lenorix/BeeL-php-sdk) client with Laravel config, Laravel's HTTP client and a ready-made webhook endpoint.
