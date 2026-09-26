@@ -28,8 +28,10 @@ final class BeelWebhookController
             return response()->json(['message' => 'BeeL webhook secret is not configured.'], 503);
         }
 
+        $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
+
         try {
-            $payload = (new WebhookVerifier($secret))->verify($request->getContent(), $signature);
+            $payload = (new WebhookVerifier($secret, $tolerance))->verify($request->getContent(), $signature);
         } catch (WebhookVerificationError) {
             return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
         }

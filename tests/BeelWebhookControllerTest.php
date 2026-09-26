@@ -93,6 +93,17 @@ it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();
 });
 
+it('rejects a validly signed webhook older than the configured replay tolerance', function () {
+    config()->set('beel.webhook_replay_tolerance_seconds', 1);
+
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $signature = signBeelPayload($payload, 'test-webhook-secret', timestamp: time() - 60);
+
+    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
+
+    $response->assertStatus(401);
+});
+
 it('throttles requests once the configured limit is exceeded', function () {
     config()->set('beel.webhook_rate_limit.max_attempts_per_minute', 2);
 

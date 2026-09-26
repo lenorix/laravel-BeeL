@@ -8,6 +8,9 @@ return [
         // Set to null to disable rate limiting entirely.
         'max_attempts_per_minute' => 300,
     ],
+    // Maximum age (in seconds) allowed for a webhook's signed timestamp, guarding against replay
+    // attacks. Matches the SDK's own WebhookVerifier default.
+    'webhook_replay_tolerance_seconds' => 300,
     'http' => [
         // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries.
         'timeout' => 30,
