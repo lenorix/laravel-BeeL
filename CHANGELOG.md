@@ -40,6 +40,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
   `Jobs\StoreInvoicePdf` does the same from the queue: it waits for BeeL's `Retry-After` while the PDF is generated, treats an existing file as done and fails at once on errors retrying can't fix. Its payload is encrypted, since it may hold an API key.
 
   `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
+- `beel:check --api-key= --company-id= --account-id=` diagnoses one tenant instead of the default credentials.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.
   - `subscribe(accountRelationship:)` and `--account-relationship` receive events from the accounts you manage (`managed` or `all`; BeeL's default is `own`). `BeelWebhookSubscription` exposes `accountRelationship`.

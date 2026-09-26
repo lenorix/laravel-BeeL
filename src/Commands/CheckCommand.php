@@ -25,7 +25,10 @@ use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
  */
 final class CheckCommand extends Command
 {
-    protected $signature = 'beel:check';
+    protected $signature = 'beel:check
+        {--api-key= : Check this API key instead of the default credentials (e.g. one tenant\'s)}
+        {--company-id= : Company to check the issuing readiness of}
+        {--account-id= : Account the key is expected to belong to}';
 
     protected $description = 'Check the BeeL configuration, API key, company and webhook setup (read-only)';
 
@@ -34,26 +37,28 @@ final class CheckCommand extends Command
     public function handle(BeelManager $manager, Container $container, WebhookSecretResolver $secrets): int
     {
         $credentials = $container->make(CredentialsResolver::class);
-        $apiKey = $credentials->apiKey();
+        $apiKey = $this->stringOption('api-key') ?? $credentials->apiKey();
+        $companyId = $this->stringOption('company-id') ?? $credentials->companyId();
+        $accountId = $this->stringOption('account-id') ?? $credentials->accountId();
 
         if ($apiKey === null) {
-            $this->fail_('No BeeL API key: set services.beel.key (BEEL_API_KEY) or bind a CredentialsResolver that returns one.');
+            $this->fail_('No BeeL API key: set services.beel.key (BEEL_API_KEY), bind a CredentialsResolver that returns one, or pass --api-key.');
 
             return self::FAILURE;
         }
 
         $this->checkKeyEnvironment($apiKey);
 
-        $beel = $manager->client();
+        $beel = $manager->client($apiKey);
         $identity = $this->identity($beel);
 
         if ($identity !== null) {
             if (self::isIntegrator($identity)) {
                 $this->note('The API key has the integrator scopes (accounts:*): it manages provisioned accounts.');
             }
-            $this->checkAccount($identity, $credentials->accountId());
-            $this->checkCompany($manager, $credentials->companyId());
-            $this->checkWebhooks($manager, $identity);
+            $this->checkAccount($identity, $accountId);
+            $this->checkCompany($manager, $apiKey, $companyId);
+            $this->checkWebhooks($manager, $apiKey, $identity);
         }
 
         $this->checkWebhookSecret($secrets);
@@ -103,16 +108,16 @@ final class CheckCommand extends Command
         }
     }
 
-    private function checkCompany(BeelManager $manager, ?string $companyId): void
+    private function checkCompany(BeelManager $manager, string $apiKey, ?string $companyId): void
     {
         if ($companyId === null) {
-            $this->note('No default company id (services.beel.company_id): skipping the issuing readiness check.');
+            $this->note('No company id (services.beel.company_id or --company-id): skipping the issuing readiness check.');
 
             return;
         }
 
         try {
-            $readiness = $manager->company(companyId: $companyId)->issuingReadiness();
+            $readiness = $manager->company(apiKey: $apiKey, companyId: $companyId)->issuingReadiness();
         } catch (\Throwable $exception) {
             $this->fail_("Could not read the issuing readiness of company {$companyId}: {$exception->getMessage()}");
 
@@ -126,7 +131,7 @@ final class CheckCommand extends Command
         }
     }
 
-    private function checkWebhooks(BeelManager $manager, MyIdentity $identity): void
+    private function checkWebhooks(BeelManager $manager, string $apiKey, MyIdentity $identity): void
     {
         $scopes = $identity->getCredential()->getScopes();
         $missing = array_values(array_diff(['webhooks:read', 'webhooks:write'], $scopes));
@@ -152,7 +157,7 @@ final class CheckCommand extends Command
         }
 
         try {
-            $subscriptions = $this->subscriptions($manager, $identity->getAccountId());
+            $subscriptions = $this->subscriptions($manager, $apiKey, $identity->getAccountId());
         } catch (\Throwable $exception) {
             $this->fail_("Could not list the webhook subscriptions: {$exception->getMessage()}");
 
@@ -197,9 +202,9 @@ final class CheckCommand extends Command
     }
 
     /** @return list<WebhookSubscription> */
-    private function subscriptions(BeelManager $manager, string $accountId): array
+    private function subscriptions(BeelManager $manager, string $apiKey, string $accountId): array
     {
-        $account = $manager->account(accountId: $accountId);
+        $account = $manager->account(apiKey: $apiKey, accountId: $accountId);
 
         return iterator_to_array($account->webhooks->all(['limit' => 100]), false);
     }
@@ -246,6 +251,13 @@ final class CheckCommand extends Command
         } else {
             $this->ok("The webhook dedupe cache store '{$label}' supports atomic, shared claims.");
         }
+    }
+
+    private function stringOption(string $name): ?string
+    {
+        $value = $this->option($name);
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 
     private function ok(string $message): void

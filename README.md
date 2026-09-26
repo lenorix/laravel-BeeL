@@ -26,13 +26,15 @@ Add your BeeL settings to `config/services.php`:
 ],
 ```
 
+Credentials live in `config/services.php`, like any Laravel service. Everything else (webhook route, cache, HTTP and PDF settings) lives in `config/beel.php`, which you only publish to change a default: `php artisan vendor:publish --tag="beel-config"`.
+
 Then check everything is in place:
 
 ```bash
 php artisan beel:check
 ```
 
-It is read-only. It reports problems with the key, the company, webhooks and the cache.
+It is read-only. It reports problems with the key, the company, webhooks and the cache. To check one tenant, pass `--api-key`, `--company-id` and `--account-id`.
 
 ## Usage
 

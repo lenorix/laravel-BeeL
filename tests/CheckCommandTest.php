@@ -178,3 +178,26 @@ it('fails when two subscriptions deliver to the same URL, since one signs with a
 
     $this->artisan('beel:check')->expectsOutputToContain('wh-2')->assertFailed();
 });
+
+it('checks one tenant with the given key, company and account instead of the defaults', function () {
+    config()->set('services.beel.key', null);
+    config()->set('services.beel.company_id', null);
+    config()->set('services.beel.account_id', null);
+    fakeBeelCheckApi(['blockers' => ['REPRESENTATION_NOT_SIGNED'], 'ready' => false]);
+
+    $this->artisan('beel:check', ['--api-key' => 'beel_sk_test_tenant', '--company-id' => 'company-t', '--account-id' => 'acc-1'])
+        ->expectsOutputToContain('REPRESENTATION_NOT_SIGNED')
+        ->assertFailed();
+
+    Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), '/companies/company-t/issuing-readiness') && $r->hasHeader('Authorization', 'Bearer beel_sk_test_tenant'));
+    Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), '/accounts/acc-1/webhooks') && $r->hasHeader('Authorization', 'Bearer beel_sk_test_tenant'));
+    Http::assertNotSent(fn (ClientRequest $r) => ! $r->hasHeader('Authorization', 'Bearer beel_sk_test_tenant'));
+});
+
+it('fails when the tenant key belongs to another account than --account-id', function () {
+    fakeBeelCheckApi();
+
+    $this->artisan('beel:check', ['--api-key' => 'beel_sk_test_tenant', '--account-id' => 'acc-other'])
+        ->expectsOutputToContain('acc-other')
+        ->assertFailed();
+});
