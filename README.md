@@ -97,16 +97,27 @@ Three rules:
 
 `$event->typed()` returns the SDK's typed model of the event. `$event->data` is the raw array.
 
+Each known type also has its own event, dispatched right after, so you can listen to just what you need. Its `data()` is typed, and `$event->webhook` is the `BeelWebhookReceived`:
+
+```php
+use Lenorix\LaravelBeel\Events\Webhooks\VerifactuStatusUpdated;
+
+Event::listen(function (VerifactuStatusUpdated $event): void {
+    SyncVerifactuStatus::dispatch($event->webhook->id, $event->data()->getInvoiceId());
+});
+```
+
 For example, to archive every invoice PDF as soon as BeeL generates it:
 
 ```php
+use Lenorix\LaravelBeel\Events\Webhooks\InvoicePdfGenerated;
 use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 
-Event::listen(function (BeelWebhookReceived $event): void {
-    if ($event->type === 'invoice.pdf.generated' && ! $event->isTest()) {
-        $invoiceId = $event->typed()->getData()->getInvoiceId();
+Event::listen(function (InvoicePdfGenerated $event): void {
+    if (! $event->webhook->isTest()) {
+        $invoiceId = $event->data()->getInvoiceId();
 
-        StoreInvoicePdf::dispatch($invoiceId, "invoices/{$invoiceId}.pdf", disk: 's3', companyId: $event->companyId);
+        StoreInvoicePdf::dispatch($invoiceId, "invoices/{$invoiceId}.pdf", disk: 's3', companyId: $event->webhook->companyId);
     }
 });
 ```

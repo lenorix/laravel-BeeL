@@ -16,6 +16,7 @@ use Lenorix\BeelSdk\Webhook\WebhookSignatureHeader;
 use Lenorix\BeelSdk\Webhook\WebhookVerifier;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\LaravelBeel\Events\Webhooks\BeelWebhookEvent;
 
 final class BeelWebhookController
 {
@@ -74,7 +75,11 @@ final class BeelWebhookController
         // the event being lost after a 202. Listeners should stay light and push heavy work to queued
         // jobs: they delay the response, and BeeL gives up on a delivery after 10 seconds.
         try {
-            Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey));
+            Event::dispatch($received = new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey));
+
+            if (($typed = BeelWebhookEvent::for($received)) !== null) {
+                Event::dispatch($typed);
+            }
         } catch (\Throwable $exception) {
             $claim?->release();
             report($exception);

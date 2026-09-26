@@ -35,7 +35,7 @@ foreach ($company->customers->all() as $customer) {} // every page, lazily
 ### Webhooks
 
 - The package verifies `POST /beel/webhook` and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookReceived` before answering 202. Set it up with `php artisan beel:webhook:subscribe`.
-- Listeners run inside the request (BeeL gives up after 10 s): only filter and dispatch a queued job. Skip `$event->isTest()`. Deduplicate durably on `$event->id` (unique index). Prefer `$event->typed()->getData()` over `$event->data` keys.
+- Listeners run inside the request (BeeL gives up after 10 s): only filter and dispatch a queued job. Skip `$event->isTest()`. Deduplicate durably on `$event->id` (unique index). Prefer the typed per-type events (`Lenorix\LaravelBeel\Events\Webhooks\InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...; `$event->data()` typed, `$event->webhook` the generic event) over matching on `BeelWebhookReceived::$type`.
 - Deduplication needs a shared atomic cache store (redis, memcached, database, dynamodb); with `array` or `null` it silently does nothing, so set `beel.webhook_dedupe_store`.
 - Never put rate limiting, auth or CSRF middleware on the webhook route: BeeL doesn't retry 4xx.
 - Multi-tenant: one subscription per tenant with `Lenorix\LaravelBeel\BeelWebhookSubscriptions`, a `WebhookSecretResolver` that picks the secret from the URL segment (never from the payload), and listeners that identify the tenant by `$event->webhookKey`.

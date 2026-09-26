@@ -34,7 +34,7 @@ A public API change is not done until each of these is updated:
 | Something a new user needs to get started | `README.md`: short sections, one line per extra feature, details in PHPDoc |
 | `config/beel.php` | Comments in the config file; the config table in `laravel-package.md` |
 | A BeeL response shape the package fakes | `Testing\BeelFake`, checked by a test that goes through a real SDK call |
-| `lenorix/beel-sdk` version | `composer.json`; "Requirements" in README and CHANGELOG; `references/beel-sdk.md` (version line and changed APIs); remove workarounds the new version makes unnecessary |
+| `lenorix/beel-sdk` version | `composer.json`; "Requirements" in README and CHANGELOG; `references/beel-sdk.md` (version line and changed APIs); remove workarounds the new version makes unnecessary; a new webhook type needs its class in `src/Events/Webhooks` and a `BeelFake::webhookData()` entry (tests fail otherwise) |
 | Laravel or PHP support | `composer.json`; `.github/workflows/run-tests.yml` matrix; README and CHANGELOG |
 | BeeL API behaviour or VERI*FACTU facts | `references/beel-api.md` or `references/verifactu.md`, with the source (docs.beel.es page, OpenAPI, BOE) |
 

@@ -71,27 +71,25 @@ $invoice->getVerifactu()?->getSubmissionStatus(); // PENDING until the AEAT answ
 ## Workflow: reacting to BeeL
 
 1. Create the subscription with `php artisan beel:webhook:subscribe` (one app) or `BeelWebhookSubscriptions::subscribe()` (one per tenant).
-2. Listen to `Lenorix\LaravelBeel\Events\BeelWebhookReceived`. In the listener, skip `isTest()`, pick the event by `$event->type`, read `$event->typed()->getData()`, and dispatch a queued job. Do nothing slow there.
+2. Listen to the per-type events in `Lenorix\LaravelBeel\Events\Webhooks` (or to `BeelWebhookReceived` for all of them). In the listener, skip `$event->webhook->isTest()`, read `$event->data()`, and dispatch a queued job. Do nothing slow there.
 3. In the job, deduplicate durably on `$event->id` (unique index) and re-read the invoice from BeeL if you need more than the event carries.
 4. To archive PDFs, dispatch `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf` on `invoice.pdf.generated`.
 5. Schedule `php artisan beel:retry-webhook-deliveries` as a safety net for deliveries that never arrived.
 
 ```php
-use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\LaravelBeel\Events\Webhooks\InvoicePdfGenerated;
+use Lenorix\LaravelBeel\Events\Webhooks\VerifactuStatusUpdated;
 use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 
-Event::listen(function (BeelWebhookReceived $event): void {
-    if ($event->isTest()) {
-        return;
+Event::listen(function (VerifactuStatusUpdated $event): void {
+    if (! $event->webhook->isTest()) {
+        SyncVerifactuStatus::dispatch($event->webhook->id, $event->data()->getInvoiceId());
     }
+});
 
-    $data = $event->typed()->getData(); // per-type model, e.g. WebhookEventDataInvoicePdfGenerated
-
-    match ($event->type) {
-        'verifactu.status.updated' => SyncVerifactuStatus::dispatch($event->id, $data->getInvoiceId()),
-        'invoice.pdf.generated' => StoreInvoicePdf::dispatch($data->getInvoiceId(), "invoices/{$data->getInvoiceId()}.pdf", disk: 's3', companyId: $event->companyId),
-        default => null,
-    };
+Event::listen(function (InvoicePdfGenerated $event): void {
+    $invoiceId = $event->data()->getInvoiceId();
+    StoreInvoicePdf::dispatch($invoiceId, "invoices/{$invoiceId}.pdf", disk: 's3', companyId: $event->webhook->companyId);
 });
 ```
 
