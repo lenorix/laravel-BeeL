@@ -25,6 +25,7 @@ Verified against the package source on 2026-09-26.
 | `webhook_replay_tolerance_seconds` | `300` | Max age of the signed timestamp |
 | `webhook_dedupe_seconds` | `900` | Remember accepted event ids; null/0 disables |
 | `webhook_dedupe_store` | `null` | Cache store for that (default store if null) |
+| `queue_rate_limit` | `250` | Requests per minute per API key for jobs using `ThrottleBeelRequests`; 0 disables |
 | `http.timeout` / `http.connect_timeout` | `30` / `10` | Seconds |
 | `http.retries` / `http.retry_delay_ms` | `3` / `100` | Laravel retries on connection errors, 429 and 5xx |
 | `http.options` | `[]` | Extra Guzzle options |
@@ -87,7 +88,7 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 - Same machinery, same guarantees and exceptions: `$company->invoices->storePreview($invoiceId, $path, disk:, overwrite:, options:)` stores the invoice preview image (WebP, drafts included; checks `RIFF`...`WEBP`), and `$company->storeRepresentationDocument($path, disk:, overwrite:, options:)` the AEAT representation PDF (the generated one while unsigned, the signed copy once submitted; BeeL answers 400 before it is generated).
 - Not available yet: the invoice ZIP archive (`createPdfArchive()`) and spreadsheet export (`export()`) come in BeeL's response body, and `lenorix/beel-sdk` 0.4 drops that body (returns null). Don't work around it with `raw`; wait for the SDK.
 - A `ResponseReceived` listener that reads `$response->body()` consumes the stream: `storePdf()` then fails ("empty") instead of storing a broken file.
-- Queued: `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($invoiceId, $path, disk:, overwrite:, options:, companyId:, apiKey:)`. It releases itself for BeeL's `retryAfter` while the PDF is generated, treats an existing file (no `overwrite`) as done, fails at once on non-retryable 4xx (draft, unknown invoice), and lets the queue retry download failures (5 tries, backoff 10/30/60/120 s). Its payload is encrypted (`ShouldBeEncrypted`, needs `APP_KEY`). Tenant-bound `CredentialsResolver`s return null in workers: pass `companyId` and `apiKey`. Don't download inside a webhook listener; dispatch this job instead (e.g. on `invoice.pdf.generated`).
+- Queued: `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($invoiceId, $path, disk:, overwrite:, options:, companyId:, apiKey:)`. It releases itself for BeeL's `retryAfter` while the PDF is generated, treats an existing file (no `overwrite`) as done, fails at once on non-retryable 4xx (draft, unknown invoice), and lets the queue retry download failures (up to 5 exceptions within a day, backoff 10/30/60/120 s; releases don't count). It uses `ThrottleBeelRequests`. Its payload is encrypted (`ShouldBeEncrypted`, needs `APP_KEY`). Tenant-bound `CredentialsResolver`s return null in workers: pass `companyId` and `apiKey`. Don't download inside a webhook listener; dispatch this job instead (e.g. on `invoice.pdf.generated`).
 - Spatie Media Library: chain the job with the `addMediaFromDisk()` step, on a shared disk (workers may run on different servers), and clean up in `catch()`:
 
   ```php
@@ -102,6 +103,34 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
   Not `addMediaFromUrl()` with the pre-signed URL: it skips the download checks and the URL expires.
 - Testing: fake `*/invoices/{id}/pdf` with `BeelFake::ok(BeelFake::invoicePdf())` and its `download_url` with `BeelFake::pdf($contents)`; use `Storage::fake($disk)` and `Sleep::fake()`.
+
+## Rate limiting queued work
+
+BeeL allows 300 requests per minute per API key (fixed 60 s window); the package retries 429s but a burst of queued jobs would keep hitting them. Add `Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests` to jobs that call BeeL:
+
+```php
+use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
+
+class IssueInvoice implements ShouldQueue
+{
+    public int $tries = 0;          // throttled releases count as attempts
+    public int $maxExceptions = 5;
+
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addDay();
+    }
+
+    public function middleware(): array
+    {
+        return [new ThrottleBeelRequests($this->apiKey, requests: 2)]; // BeeL calls the job makes: create + issue
+    }
+}
+```
+
+- Budget `beel.queue_rate_limit` (250/min, room for web requests; 0 disables) per API key (null = the `CredentialsResolver`'s), shared by all jobs using that key; stored hashed in Laravel's rate limiter cache (`cache.limiter` or default), which must be shared and atomic (redis, memcached, database, dynamodb).
+- Increment-first, so concurrent workers don't overshoot; a job over budget is released until the window resets.
+- A release counts as an attempt: use `$tries = 0`, `$maxExceptions` and `retryUntil()` rather than a small `$tries` (as `StoreInvoicePdf` does).
 
 ## Transport, retries and idempotency
 

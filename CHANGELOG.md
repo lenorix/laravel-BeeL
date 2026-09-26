@@ -43,6 +43,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
 - Per-type webhook events in `Events\Webhooks` (`InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...), dispatched right after `BeelWebhookReceived` for known types, with typed `data()`.
 - `$company->invoices->storePreview()` (the invoice's WebP preview) and `$company->storeRepresentationDocument()` (the AEAT representation PDF) store those documents the same way as `storePdf()`. The download settings are `beel.downloads.*`, and the exceptions are `DocumentAlreadyExists` and `DocumentDownloadFailed`.
 - Responses from BeeL keep their body in Guzzle's `php://temp` stream instead of being copied into a PHP string.
+- `Jobs\Middleware\ThrottleBeelRequests` keeps queued jobs under BeeL's rate limit per API key (`beel.queue_rate_limit`, 250/min), releasing them until the window resets instead of provoking 429s. `StoreInvoicePdf` uses it and retries within a day, counting only exceptions.
 - `beel:check --api-key= --company-id= --account-id=` diagnoses one tenant instead of the default credentials.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.

@@ -44,6 +44,10 @@ return [
         // download that fails verification.
         'attempts' => 3,
     ],
+    // Requests per minute that queued jobs using the ThrottleBeelRequests middleware (StoreInvoicePdf
+    // does) may send per API key. BeeL allows 300 per key in a fixed 60 s window; the default leaves
+    // room for web requests. 0 or null disables the throttle.
+    'queue_rate_limit' => 250,
     'http' => [
         // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries.
         'timeout' => 30,

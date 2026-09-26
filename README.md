@@ -181,6 +181,7 @@ Each of these is documented in its PHPDoc and in `config/beel.php`:
   - `beel:webhook:subscribe --provisioner-events --account-relationship=all`;
   - `$event->accountRelationship` and `$event->accountExternalRef`.
 - **Logs and metrics.** Reported BeeL errors carry `request_id`, `api_code` and `status_code` in their log context, also when your own exception wraps them. For metrics, listen to Laravel's HTTP client events.
+- **Bulk work in queues.** Add the `ThrottleBeelRequests` middleware to jobs that call BeeL. They then wait in the queue instead of hitting BeeL's limit of 300 requests per minute per key. `StoreInvoicePdf` already uses it.
 - **HTTP settings.** Timeouts and retries are in `config/beel.php` (`php artisan vendor:publish --tag="beel-config"`).
 - **Your own endpoint.** Set `beel.register_webhook_route` to `false` and use the SDK's `WebhookVerifier`.
 

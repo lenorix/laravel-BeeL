@@ -13,6 +13,7 @@ use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
+use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
 
 /**
  * Stores an issued invoice's PDF on a disk from the queue, with `storePdf()`:
@@ -21,8 +22,10 @@ use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
  *
  * - While BeeL is still generating the PDF, it goes back to the queue for the `Retry-After` BeeL gives.
  * - An existing file without `overwrite` counts as done, so dispatching twice is harmless.
- * - A failed download is retried with backoff; an error that retrying can't fix (a draft has no
- *   PDF, an unknown invoice) fails the job at once.
+ * - A failed download is retried with backoff (up to 5 exceptions, within a day); an error that
+ *   retrying can't fix (a draft has no PDF, an unknown invoice) fails the job at once.
+ * - It stays under BeeL's rate limit (ThrottleBeelRequests), waiting in the queue instead of
+ *   provoking 429s when thousands are dispatched at once.
  *
  * Credentials come from the CredentialsResolver when the job runs. A resolver bound to the request
  * or tenant returns null in a queue worker, so pass `companyId` and `apiKey` then. The payload is
@@ -32,7 +35,10 @@ final class StoreInvoicePdf implements ShouldBeEncrypted, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
-    public int $tries = 5;
+    /** Releases (waiting for BeeL or for the rate limit) are not failures: only exceptions count. */
+    public int $tries = 0;
+
+    public int $maxExceptions = 5;
 
     /**
      * @param  string|null  $disk  Disk name; null uses the default disk.
@@ -47,6 +53,17 @@ final class StoreInvoicePdf implements ShouldBeEncrypted, ShouldQueue
         public readonly ?string $companyId = null,
         #[\SensitiveParameter] public readonly ?string $apiKey = null,
     ) {}
+
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addDay();
+    }
+
+    /** @return list<object> */
+    public function middleware(): array
+    {
+        return [new ThrottleBeelRequests($this->apiKey)];
+    }
 
     /** @return list<int> */
     public function backoff(): array
