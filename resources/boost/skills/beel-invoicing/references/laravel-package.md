@@ -77,6 +77,7 @@ Listener example:
 ```php
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\DB;
 use Lenorix\BeelSdk\Webhook\WebhookEventType;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
@@ -97,23 +98,29 @@ class HandleBeelWebhook implements ShouldQueue
             return; // dashboard test delivery
         }
 
-        // Deduplicate: BeeL may deliver the same event more than once.
-        if (ProcessedBeelEvent::where('event_id', $event->id)->exists()) {
-            return;
-        }
+        DB::transaction(function () use ($event) {
+            // Claim the event before doing anything. With a unique index on event_id, a concurrent
+            // worker handling a redelivery waits on the index and then inserts nothing.
+            $claimed = DB::table('processed_beel_events')->insertOrIgnore([
+                'event_id' => $event->id,
+                'created_at' => now(),
+            ]);
 
-        match ($event->type) {
-            WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->payload['company_id'] ?? null, $event->data),
-            WebhookEventType::INVOICE_VOIDED->value => $this->markVoided($event->data),
-            default => null,
-        };
+            if ($claimed === 0) {
+                return; // already processed
+            }
 
-        ProcessedBeelEvent::create(['event_id' => $event->id]);
+            match ($event->type) {
+                WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->payload['company_id'] ?? null, $event->data),
+                WebhookEventType::INVOICE_VOIDED->value => $this->markVoided($event->data),
+                default => null,
+            };
+        });
     }
 }
 ```
 
-`ProcessedBeelEvent`, `syncVerifactu` and `markVoided` are app code; a unique index on `event_id` makes the deduplication race-safe.
+`processed_beel_events` (with a unique index on `event_id`), `syncVerifactu` and `markVoided` are app code. If a side effect throws, the transaction rolls back the claim too, so the queued retry processes the event again. That makes the database changes exactly-once, but external side effects inside the transaction (emails, HTTP calls) can still repeat after a rollback: make them idempotent as well, or dispatch them after commit.
 
 ## Testing
 

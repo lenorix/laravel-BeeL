@@ -65,7 +65,7 @@ $invoice->getVerifactu()?->getSubmissionStatus(); // PENDING until the AEAT answ
 
 ## Decision guide
 
-- **Wrong data on an issued invoice** (amount, tax, recipient): corrective invoice. `PARTIAL` sends only the difference lines (negative quantities for reductions); `TOTAL` sends no lines and fully replaces the original. Codes: R1 legal error or LIVA art. 80 one/two/six (returns, discounts), R2 insolvency (concurso), R3 bad debt (incobrable), R4 any other cause, R5 only for simplified invoices.
+- **Wrong data on an issued invoice** (amount, tax, recipient): corrective invoice. `PARTIAL` sends only the difference lines (negative quantities for reductions); `TOTAL` sends no lines and fully replaces the original. Codes: R1 legal error or LIVA art. 80.1, 80.2, 80.6 (returns, discounts), R2 insolvency (concurso), R3 bad debt (incobrable), R4 any other cause, R5 only for simplified invoices.
 - **Invoice created by mistake that should never have existed**: `void()` with a reason of at least 10 characters. The number is not reused.
 - **Retail ticket-like sale**: simplified invoice (`SIMPLIFIED`, AEAT F2) up to 3,000 EUR including VAT, anonymous recipient only up to 400 EUR, never with IRPF, recargo de equivalencia, reverse charge or cross-border operations.
 - **Quote**: proforma (`PROFORMA`), non-fiscal and never sent to the AEAT; convert it with `convertToInvoice()`.
