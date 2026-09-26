@@ -16,16 +16,20 @@ final class BeelWebhookController
 {
     public function __invoke(Request $request, WebhookSecretResolver $secrets): JsonResponse
     {
+        // Bail before resolving the secret (which a custom WebhookSecretResolver may look up in a
+        // database or cache) so a request with no signature at all is rejected with minimal work.
+        $signature = $request->header('BeeL-Signature');
+        if (! is_string($signature) || trim($signature) === '') {
+            return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
+        }
+
         $secret = $secrets->resolve($request);
         if ($secret === null) {
             return response()->json(['message' => 'BeeL webhook secret is not configured.'], 503);
         }
 
         try {
-            $payload = (new WebhookVerifier($secret))->verify(
-                $request->getContent(),
-                $request->header('BeeL-Signature'),
-            );
+            $payload = (new WebhookVerifier($secret))->verify($request->getContent(), $signature);
         } catch (WebhookVerificationError) {
             return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
         }

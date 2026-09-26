@@ -1,7 +1,9 @@
 <?php
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
+use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 function signBeelPayload(array $payload, string $secret, ?int $timestamp = null): string
@@ -44,6 +46,22 @@ it('rejects a webhook with an invalid signature', function () {
 });
 
 it('rejects a webhook with a missing signature header', function () {
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $response = $this->postJson('/beel/webhook', $payload);
+
+    $response->assertStatus(401);
+});
+
+it('does not resolve the webhook secret when the signature header is missing', function () {
+    app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
+    {
+        public function resolve(Request $request): ?string
+        {
+            throw new RuntimeException('The secret resolver should not run without a signature header.');
+        }
+    });
+
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
 
     $response = $this->postJson('/beel/webhook', $payload);
