@@ -30,7 +30,11 @@ final class BeelFake
         return new BeelApiFake;
     }
 
-    /** A successful response: `{success: true, data: ..., meta}`. */
+    /**
+     * A successful response: `{success: true, data: ..., meta}`.
+     *
+     * @param  array<array-key, mixed>  $data
+     */
     public static function ok(array $data, int $status = 200): PromiseInterface
     {
         return Factory::response(['success' => true, 'data' => $data, 'meta' => self::meta()], $status);
@@ -98,7 +102,12 @@ final class BeelFake
         ], $status, $retryAfter === null ? [] : ['Retry-After' => (string) $retryAfter]);
     }
 
-    /** An issued invoice with VERI*FACTU accepted, like `GET /v1/companies/{id}/invoices/{id}`. */
+    /**
+     * An issued invoice with VERI*FACTU accepted, like `GET /v1/companies/{id}/invoices/{id}`.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     public static function invoice(array $overrides = []): array
     {
         return self::merge([
@@ -157,6 +166,9 @@ final class BeelFake
     /**
      * An invoice PDF link, like `GET /v1/companies/{id}/invoices/{id}/pdf` (a pre-signed URL, not the
      * bytes). Fake that URL too, e.g. with `BeelFake::pdf()`, to test `storePdf()`.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
      */
     public static function invoicePdf(array $overrides = []): array
     {
@@ -173,7 +185,12 @@ final class BeelFake
         return Factory::response($contents, 200, ['Content-Type' => 'application/pdf', 'Content-Length' => (string) strlen($contents)]);
     }
 
-    /** A customer, like `GET /v1/companies/{id}/customers/{id}`. */
+    /**
+     * A customer, like `GET /v1/companies/{id}/customers/{id}`.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     public static function customer(array $overrides = []): array
     {
         return self::merge([
@@ -193,6 +210,8 @@ final class BeelFake
      * The API key's identity, like `GET /v1/me/identity`.
      *
      * @param  list<string>|null  $scopes  Replaces the default scopes when given.
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
      */
     public static function identity(array $overrides = [], ?array $scopes = null): array
     {
@@ -208,7 +227,7 @@ final class BeelFake
             ],
         ], $overrides);
 
-        if ($scopes !== null) {
+        if ($scopes !== null && is_array($identity['credential'] ?? null)) {
             $identity['credential']['scopes'] = $scopes;
         }
 
@@ -219,13 +238,19 @@ final class BeelFake
      * A company's issuing readiness, like `GET /v1/companies/{id}/issuing-readiness`.
      *
      * @param  list<string>  $blockers  Not ready when non-empty (e.g. `REPRESENTATION_NOT_SIGNED`).
+     * @return array{ready: bool, blockers: list<string>}
      */
     public static function issuingReadiness(array $blockers = []): array
     {
         return ['ready' => $blockers === [], 'blockers' => $blockers];
     }
 
-    /** An account you provisioned as an integrator, as listed by `GET /v1/accounts` (cursor-paginated). */
+    /**
+     * An account you provisioned as an integrator, as listed by `GET /v1/accounts` (cursor-paginated).
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     public static function managedAccount(array $overrides = []): array
     {
         return self::merge([
@@ -241,7 +266,12 @@ final class BeelFake
         ], $overrides);
     }
 
-    /** A webhook subscription, as listed by `GET /v1/accounts/{id}/webhooks` (never with its secret). */
+    /**
+     * A webhook subscription, as listed by `GET /v1/accounts/{id}/webhooks` (never with its secret).
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     public static function webhookSubscription(array $overrides = []): array
     {
         return self::merge([
@@ -255,7 +285,12 @@ final class BeelFake
         ], $overrides);
     }
 
-    /** One delivery attempt of a subscription, as listed by `GET /v1/accounts/{id}/webhooks/{id}/deliveries`. */
+    /**
+     * One delivery attempt of a subscription, as listed by `GET /v1/accounts/{id}/webhooks/{id}/deliveries`.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     public static function webhookDelivery(array $overrides = []): array
     {
         return self::merge([
@@ -274,6 +309,9 @@ final class BeelFake
     /**
      * A realistic `data` for a webhook event type, e.g. to pass to `postBeelWebhook()` (which uses
      * it by default). Unknown types get an empty array.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
      */
     public static function webhookData(string $type, array $overrides = []): array
     {
@@ -297,13 +335,23 @@ final class BeelFake
     /**
      * Merges objects key by key and replaces lists whole, so overriding `lines` or `scopes` never
      * leaves elements of the default behind.
+     *
+     * @param  array<string, mixed>  $base
+     * @param  array<array-key, mixed>  $overrides
+     * @return array<string, mixed>
      */
     private static function merge(array $base, array $overrides): array
     {
         foreach ($overrides as $key => $value) {
-            $base[$key] = is_array($value) && ! array_is_list($value) && is_array($base[$key] ?? null) && ! array_is_list($base[$key])
-                ? self::merge($base[$key], $value)
-                : $value;
+            $key = (string) $key;
+            $current = $base[$key] ?? null;
+
+            if (is_array($value) && ! array_is_list($value) && is_array($current) && ! array_is_list($current)) {
+                /** @var array<string, mixed> $current Objects decoded from BeeL's JSON have string keys. */
+                $base[$key] = self::merge($current, $value);
+            } else {
+                $base[$key] = $value;
+            }
         }
 
         return $base;

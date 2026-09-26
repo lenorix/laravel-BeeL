@@ -17,12 +17,13 @@ use Lenorix\BeelSdk\Webhook\WebhookVerifier;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 use Lenorix\LaravelBeel\Events\Webhooks\BeelWebhookEvent;
+use Lenorix\LaravelBeel\Support\Settings;
 
 final class BeelWebhookController
 {
     public function __invoke(Request $request, WebhookSecretResolver $secrets): JsonResponse
     {
-        $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
+        $tolerance = Settings::int('beel.webhook_replay_tolerance_seconds', 300);
 
         // Cheap pre-filter on the header alone: reject anything that can never pass verification
         // before resolving the secret (a custom resolver may hit a database) or hashing the body.
@@ -74,6 +75,8 @@ final class BeelWebhookController
         // claim and answer 503: BeeL retries (and the retry command sees the failed delivery) instead of
         // the event being lost after a 202. Listeners should stay light and push heavy work to queued
         // jobs: they delay the response, and BeeL gives up on a delivery after 10 seconds.
+        // Decoded from a JSON object, so its keys are strings.
+        /** @var array<string, mixed> $data */
         try {
             Event::dispatch($received = new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey));
 

@@ -7,6 +7,7 @@ namespace Lenorix\LaravelBeel\Jobs\Middleware;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\RateLimiter;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
+use Lenorix\LaravelBeel\Support\Settings;
 
 /**
  * Job middleware that keeps queued jobs under BeeL's rate limit (a fixed 60-second window per API
@@ -36,8 +37,8 @@ final class ThrottleBeelRequests
 
     public function handle(object $job, callable $next): mixed
     {
-        $perMinute = (int) config('beel.queue_rate_limit', 250);
-        if ($perMinute <= 0) {
+        $perMinute = Settings::optionalInt('beel.queue_rate_limit', 250);
+        if ($perMinute === null || $perMinute <= 0) {
             return $next($job);
         }
 

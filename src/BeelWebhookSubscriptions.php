@@ -6,11 +6,13 @@ namespace Lenorix\LaravelBeel;
 
 use Lenorix\BeelSdk\Generated\Model\CreateWebhookSubscriptionRequest;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
+use Lenorix\BeelSdk\Generated\Model\WebhookSubscriptionWithSecret;
 use Lenorix\BeelSdk\Webhook\WebhookEventType;
 use Lenorix\LaravelBeel\Exceptions\RotatedWebhookSecretNotStored;
 use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionNotFound;
 use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionOrphaned;
+use Lenorix\LaravelBeel\Support\Settings;
 
 /**
  * Manages BeeL webhook subscriptions pointing at this app, e.g. one per tenant
@@ -33,7 +35,7 @@ final class BeelWebhookSubscriptions
     /** The webhook URL for a key: APP_URL + beel.webhook_path [+ '/' + key]. */
     public function url(?string $webhookKey = null): string
     {
-        $url = rtrim((string) config('app.url'), '/').'/'.trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+        $url = rtrim(Settings::string('app.url', ''), '/').'/'.trim(Settings::string('beel.webhook_path', 'beel/webhook'), '/');
 
         return $webhookKey === null || $webhookKey === '' ? $url : $url.'/'.rawurlencode($webhookKey);
     }
@@ -87,7 +89,7 @@ final class BeelWebhookSubscriptions
         if ($accountRelationship !== null) {
             $request->setAccountRelationship($accountRelationship);
         }
-        $created = $account->webhooks->create($request);
+        $created = self::withSecret($account->webhooks->create($request));
 
         try {
             $store($created->getSecret());
@@ -120,7 +122,7 @@ final class BeelWebhookSubscriptions
         $account = $this->manager->account(apiKey: $apiKey, accountId: $accountId);
 
         $existing = $this->findIn($account, $url) ?? throw new WebhookSubscriptionNotFound($url);
-        $rotated = $account->webhooks->rotateSecret($existing->getId());
+        $rotated = self::withSecret($account->webhooks->rotateSecret($existing->getId()));
 
         try {
             $store($rotated->getSecret());
@@ -172,5 +174,13 @@ final class BeelWebhookSubscriptions
         }
 
         return $url;
+    }
+
+    /** The SDK types these responses as mixed; anything but a subscription with its secret is a bug to surface. */
+    private static function withSecret(mixed $response): WebhookSubscriptionWithSecret
+    {
+        return $response instanceof WebhookSubscriptionWithSecret
+            ? $response
+            : throw new \UnexpectedValueException('BeeL returned '.get_debug_type($response).' instead of a webhook subscription with its secret.');
     }
 }

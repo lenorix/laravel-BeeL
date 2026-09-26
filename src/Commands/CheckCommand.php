@@ -18,6 +18,7 @@ use Lenorix\LaravelBeel\BeelWebhookSubscriptions;
 use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
+use Lenorix\LaravelBeel\Support\Settings;
 
 /**
  * Read-only diagnosis of the BeeL setup: it only sends GET requests and never changes anything in
@@ -148,7 +149,7 @@ final class CheckCommand extends Command
             return;
         }
 
-        $expected = rtrim((string) config('app.url'), '/').'/'.trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+        $expected = rtrim(Settings::string('app.url', ''), '/').'/'.trim(Settings::string('beel.webhook_path', 'beel/webhook'), '/');
 
         if (! str_starts_with($expected, 'https://')) {
             $this->warn_("The webhook URL {$expected} (from APP_URL) is not HTTPS; BeeL only delivers to HTTPS endpoints.");
@@ -236,7 +237,7 @@ final class CheckCommand extends Command
 
         $name = config('beel.webhook_dedupe_store');
         $name = is_string($name) && $name !== '' ? $name : null;
-        $label = $name ?? (string) config('cache.default');
+        $label = $name ?? Settings::string('cache.default', 'default');
 
         try {
             $store = Cache::store($name)->getStore();

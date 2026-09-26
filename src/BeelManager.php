@@ -8,6 +8,7 @@ use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
+use Lenorix\LaravelBeel\Support\Settings;
 
 /**
  * Creates isolated SDK clients. Explicit arguments win; otherwise credentials come from the bound
@@ -24,8 +25,8 @@ final class BeelManager
     {
         $apiKey ??= $this->credentials()->apiKey();
         $baseUrl = $this->config->get('services.beel.base_url', 'https://app.beel.es/api');
-        $retries = (int) $this->config->get('beel.http.retries', 3);
-        $retryDelay = (int) $this->config->get('beel.http.retry_delay_ms', 100);
+        $retries = Settings::int('beel.http.retries', 3);
+        $retryDelay = Settings::int('beel.http.retry_delay_ms', 100);
 
         if (! is_string($apiKey) || trim($apiKey) === '') {
             throw new \InvalidArgumentException('No BeeL API key: pass one, set services.beel.key, or bind a CredentialsResolver that returns it.');

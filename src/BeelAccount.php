@@ -55,6 +55,7 @@ final class BeelAccount
         return $this->scope->{$name};
     }
 
+    /** @param  array<array-key, mixed>  $arguments */
     public function __call(string $name, array $arguments): mixed
     {
         $result = $this->scope->{$name}(...$arguments);

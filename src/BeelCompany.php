@@ -11,6 +11,7 @@ use Lenorix\BeelSdk\Generated\Client;
 use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
 use Lenorix\BeelSdk\Generated\Model\RepresentationDownloadResponse;
 use Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyProductsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyRecurringInvoicesResource;
@@ -103,9 +104,10 @@ final class BeelCompany
 
         $resource = $this->scope->{$name};
 
-        return $name === 'invoices' ? new BeelCompanyInvoices($resource) : $resource;
+        return $resource instanceof CompanyInvoicesResource ? new BeelCompanyInvoices($resource) : $resource;
     }
 
+    /** @param  array<array-key, mixed>  $arguments */
     public function __call(string $name, array $arguments): mixed
     {
         $result = $this->scope->{$name}(...$arguments);

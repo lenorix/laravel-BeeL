@@ -8,6 +8,7 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
+use Lenorix\LaravelBeel\Support\Settings;
 use Psr\Http\Client\ClientInterface;
 
 final class BeelHttpClientFactory
@@ -19,8 +20,8 @@ final class BeelHttpClientFactory
 
     public function make(int $retries, int $retryDelayMs): ClientInterface
     {
-        $timeout = (float) $this->config->get('beel.http.timeout', 30);
-        $connectTimeout = (float) $this->config->get('beel.http.connect_timeout', 10);
+        $timeout = Settings::float('beel.http.timeout', 30);
+        $connectTimeout = Settings::float('beel.http.connect_timeout', 10);
 
         $request = $this->http->timeout($timeout)
             ->connectTimeout($connectTimeout)
@@ -30,7 +31,7 @@ final class BeelHttpClientFactory
             // PendingRequest's retry count is the total number of attempts.
             $request->retry(
                 $retries + 1,
-                static function (int $attempt, \Throwable $exception) use ($retryDelayMs): int {
+                static function (int $attempt, mixed $exception) use ($retryDelayMs): int {
                     if ($exception instanceof RequestException) {
                         $retryAfter = self::retryAfterMs($exception->response);
                         if ($retryAfter !== null) {

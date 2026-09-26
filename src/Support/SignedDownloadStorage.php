@@ -45,7 +45,7 @@ final class SignedDownloadStorage
             throw new DocumentAlreadyExists($document, $path);
         }
 
-        $attempts = max(1, (int) $this->config->get('beel.downloads.attempts', 3));
+        $attempts = max(1, Settings::int('beel.downloads.attempts', 3));
         $options += ['ContentType' => $kind->contentType()];
 
         for ($attempt = 1; ; $attempt++) {
@@ -61,7 +61,7 @@ final class SignedDownloadStorage
                     throw new DocumentDownloadFailed($document, $failure->getMessage(), $attempt);
                 }
 
-                Sleep::usleep(max(0, (int) $this->config->get('beel.http.retry_delay_ms', 100)) * 1000);
+                Sleep::usleep(max(0, Settings::int('beel.http.retry_delay_ms', 100)) * 1000);
             }
         }
     }
@@ -74,8 +74,8 @@ final class SignedDownloadStorage
         try {
             $response = $this->http->withOptions($this->transportOptions() + [
                 'stream' => true,
-                'read_timeout' => (float) $this->config->get('beel.downloads.read_timeout', 30),
-                'connect_timeout' => (float) $this->config->get('beel.http.connect_timeout', 10),
+                'read_timeout' => Settings::float('beel.downloads.read_timeout', 30),
+                'connect_timeout' => Settings::float('beel.http.connect_timeout', 10),
                 'timeout' => 0,
             ])->get($url);
         } catch (ConnectionException $exception) {
@@ -101,7 +101,7 @@ final class SignedDownloadStorage
         $temporary = ($directory === '.' ? '' : $directory.'/').'.beel-'.Str::random(16).'-'.basename($path);
 
         $resource = StreamWrapper::getResource($body);
-        stream_set_chunk_size($resource, max(8192, (int) $this->config->get('beel.downloads.buffer_bytes', 65536)));
+        stream_set_chunk_size($resource, max(8192, Settings::int('beel.downloads.buffer_bytes', 65536)));
 
         try {
             $filesystem->writeStream($temporary, $resource, $options);

@@ -15,6 +15,7 @@ use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
+use Lenorix\LaravelBeel\Support\Settings;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -68,7 +69,7 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
 
         // These global middleware json_decode and walk the whole body before routing. The webhook
         // only ever reads the raw body after verifying its signature, so skip them for that path.
-        $path = trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+        $path = trim(Settings::string('beel.webhook_path', 'beel/webhook'), '/');
         $isWebhook = fn (Request $request): bool => $request->is($path, $path.'/*');
 
         TrimStrings::skipWhen($isWebhook);

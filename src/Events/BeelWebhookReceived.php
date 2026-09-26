@@ -26,6 +26,7 @@ final class BeelWebhookReceived
 
     /**
      * @param  string  $id  BeeL's event id. BeeL may redeliver the same event, so use this to deduplicate.
+     * @param  array<string, mixed>  $data  The event's `data` (prefer typed()).
      * @param  array<string, mixed>  $payload
      * @param  string|null  $webhookKey  The optional URL segment the delivery arrived on (/beel/webhook/{key}).
      *                                   It identifies the tenant only when the bound WebhookSecretResolver

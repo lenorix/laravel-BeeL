@@ -20,6 +20,7 @@ use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
+use Lenorix\LaravelBeel\Support\Settings;
 
 /**
  * Safety net for webhook deliveries that never reached the app: BeeL retries a failed delivery only
@@ -59,8 +60,8 @@ final class RetryWebhookDeliveriesCommand extends Command
 
     public function handle(BeelManager $manager, Container $container): int
     {
-        $maxAge = (int) ($this->stringOption('max-age') ?? config('beel.webhook_delivery_retry.max_age_minutes', 1440));
-        $maxAttempts = (int) ($this->stringOption('max-attempts') ?? config('beel.webhook_delivery_retry.max_attempts', 8));
+        $maxAge = (int) ($this->stringOption('max-age') ?? Settings::int('beel.webhook_delivery_retry.max_age_minutes', 1440));
+        $maxAttempts = (int) ($this->stringOption('max-attempts') ?? Settings::int('beel.webhook_delivery_retry.max_attempts', 8));
         $cutoff = Carbon::now()->subMinutes($maxAge);
 
         $apiKey = $this->stringOption('api-key');
@@ -208,6 +209,10 @@ final class RetryWebhookDeliveriesCommand extends Command
     {
         $payload = $latest->getPayload() !== null ? json_decode($latest->getPayload(), true) : null;
 
+        // Decoded from a JSON object, so its keys are strings.
+        /** @var array<string, mixed>|null $payload */
+        $payload = is_array($payload) ? $payload : null;
+
         $event = new BeelWebhookDeliveryAbandoned(
             accountId: $account->accountId,
             subscriptionId: $webhookId,
@@ -217,7 +222,7 @@ final class RetryWebhookDeliveriesCommand extends Command
             lastDeliveryId: $latest->getId(),
             lastHttpStatus: $latest->getHttpStatus(),
             lastError: $latest->getErrorMessage(),
-            payload: is_array($payload) ? $payload : null,
+            payload: $payload,
         );
 
         $message = "Giving up on {$label}: {$event->attempts} attempts, none delivered.";
@@ -245,16 +250,14 @@ final class RetryWebhookDeliveriesCommand extends Command
     private function reportInactive(BeelAccount $account, WebhookSubscription $subscription): void
     {
         // These fields are absent while a subscription is active, so their typed getters can't be called blindly.
-        $field = fn (string $property, \Closure $get) => $subscription->isInitialized($property) ? $get() : null;
-
         $event = new BeelWebhookSubscriptionInactive(
             accountId: $account->accountId,
             subscriptionId: $subscription->getId(),
             url: $subscription->getUrl(),
-            deactivatedBy: $field('deactivatedBy', fn () => $subscription->getDeactivatedBy()),
-            deactivatedAt: $field('deactivatedAt', fn () => $subscription->getDeactivatedAt()),
-            consecutiveFailures: $field('consecutiveFailures', fn () => $subscription->getConsecutiveFailures()),
-            lastError: $field('lastError', fn () => $subscription->getLastError()),
+            deactivatedBy: $subscription->isInitialized('deactivatedBy') ? $subscription->getDeactivatedBy() : null,
+            deactivatedAt: $subscription->isInitialized('deactivatedAt') ? $subscription->getDeactivatedAt() : null,
+            consecutiveFailures: $subscription->isInitialized('consecutiveFailures') ? $subscription->getConsecutiveFailures() : null,
+            lastError: $subscription->isInitialized('lastError') ? $subscription->getLastError() : null,
         );
 
         $message = "BeeL webhook subscription {$event->subscriptionId} of account {$event->accountId} is inactive; BeeL will not deliver to it until it is reactivated.";
