@@ -1,6 +1,10 @@
 # Path-based git attributes
 # https://www.kernel.org/pub/software/scm/git/docs/gitattributes.html
 
+# Check out text files with LF on every OS (Windows runners included), so shipped Boost
+# guidelines and skills keep the line endings their frontmatter and parsers expect.
+* text=auto eol=lf
+
 # Ignore all test and documentation with "export-ignore".
 /.github            export-ignore
 /.gitattributes     export-ignore
