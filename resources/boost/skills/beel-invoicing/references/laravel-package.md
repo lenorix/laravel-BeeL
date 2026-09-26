@@ -70,6 +70,20 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 `BeelCompany` forwards `get()`, `update()`, `delete()`, `fiscalSummary()` and `issuingReadiness()` to the SDK scope, and `BeelAccount` forwards `get()`, `usage()`, `changeAccessLevel()`, `createClaimToken()`, `setOwner()` and `endManagement()`; both are annotated with `@method` for IDEs and static analysis.
 
+## Storing invoice PDFs
+
+`$company->invoices` is `Lenorix\LaravelBeel\BeelCompanyInvoices`: the SDK's `CompanyInvoicesResource` (every method, `schedule`, and `withOptions()` keeps the decorator; the SDK resource is `->resource`) plus:
+
+`storePdf(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string`
+
+- Gets a fresh pre-signed URL (`getPdf()`), streams it with Laravel's HTTP client (`stream`, no BeeL `Authorization`) into `Storage::disk($disk)->getDriver()->writeStream()` on a temporary file next to `$path` (same extension), then moves it into place. Memory stays at about `beel.pdf.buffer_bytes` (64 KiB) plus the adapter's own buffer (S3 buffers each upload part in `php://temp`), whatever the PDF's size. Needs `allow_url_fopen` to stream (else cURL buffers in `php://temp`).
+- Moves only after verifying: HTTP 200, `%PDF-` signature, bytes == Content-Length, stored size == bytes. A failure never leaves a partial file nor touches an existing one.
+- Retries the whole attempt with a new URL (`beel.pdf.attempts`, 3) on connection errors, 5xx, 403 (expired URL), 408, 429 and failed checks; idle timeout `beel.pdf.read_timeout` (30 s).
+- Throws `Exceptions\InvoicePdfAlreadyExists` (path exists and not `overwrite`; checked before calling BeeL and before the move), `Exceptions\InvoicePdfNotReady` (BeeL answered 202; retry later), `Exceptions\InvoicePdfDownloadFailed` (`attempts`; message never contains the URL), or the SDK's `BeelApiError` (`INVOICE_NOT_ISSUED_NO_PDF` for drafts).
+- `$options` go to the disk (`visibility`, ...); `ContentType` defaults to `application/pdf`.
+- A `ResponseReceived` listener that reads `$response->body()` consumes the stream: `storePdf()` then fails ("empty") instead of storing a broken file.
+- Testing: fake `*/invoices/{id}/pdf` with `BeelFake::ok(BeelFake::invoicePdf())` and its `download_url` with `BeelFake::pdf($contents)`; use `Storage::fake($disk)` and `Sleep::fake()`.
+
 ## Transport, retries and idempotency
 
 - The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx. On a 429 it waits the numeric-seconds `Retry-After` value (capped at 60s, BeeL's rate-limit window), falling back to `retry_delay_ms` when the header is absent or not that form. If retries are exhausted or disabled, handle `BeelRateLimitError::$retryAfterSeconds` yourself for longer waits.
@@ -171,7 +185,7 @@ class SyncVerifactuStatus implements ShouldQueue
   - `BeelFake::ok(array $data, int $status = 200)`: `{success, data, meta.request_id}`.
   - `BeelFake::page(string $key, array $items, bool $hasNext = false, int $page = 1, int $perPage = 20)`: `data.{$key}` plus `pagination` (keys: `invoices`, `customers`, `products`, `webhooks`, `deliveries`, ...). `cursorPage($key, $items, ?$nextCursor)` for `accounts`.
   - `BeelFake::error(int $status, string $code, ?string $message = null, array $details = [], ?int $retryAfter = null)`: surfaces as the matching `BeelApiError` subclass with `apiCode`, `details`, `requestId` = `BeelFake::REQUEST_ID`, `retryAfter`. 429 and 5xx are retried `beel.http.retries` times: `Sleep::fake()` or set retries to 0.
-  - Resource arrays, `$overrides` merged into nested objects with lists replaced whole: `invoice()` (issued, VERI*FACTU accepted), `customer()`, `identity(array $overrides = [], ?array $scopes = null)`, `issuingReadiness(array $blockers = [])`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, `webhookData(string $type)` (realistic `data` per event type, `[]` for unknown types).
+  - Resource arrays, `$overrides` merged into nested objects with lists replaced whole: `invoice()` (issued, VERI*FACTU accepted), `invoicePdf()` (pre-signed link; `BeelFake::pdf($contents)` fakes its download), `customer()`, `identity(array $overrides = [], ?array $scopes = null)`, `issuingReadiness(array $blockers = [])`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, `webhookData(string $type)` (realistic `data` per event type, `[]` for unknown types).
   - Use `Http::fakeSequence()` with `page(..., hasNext: true)` then a last page to test `all()` iteration.
 - Assert outgoing calls with `Http::assertSent(fn (Illuminate\Http\Client\Request $r) => $r->hasHeader('Authorization', 'Bearer ...') && str_contains($r->url(), $companyId))`.
 - Simulate transport failures with `Http::fake(fn () => throw new GuzzleHttp\Exception\ConnectException('...', new GuzzleHttp\Psr7\Request('GET', 'https://example.test')))`.

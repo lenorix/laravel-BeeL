@@ -148,6 +148,25 @@ final class BeelFake
         ], $overrides);
     }
 
+    /**
+     * An invoice PDF link, like `GET /v1/companies/{id}/invoices/{id}/pdf` (a pre-signed URL, not the
+     * bytes). Fake that URL too, e.g. with `BeelFake::pdf()`, to test `storePdf()`.
+     */
+    public static function invoicePdf(array $overrides = []): array
+    {
+        return self::merge([
+            'download_url' => 'https://beel-pdfs.s3.eu-west-1.amazonaws.com/invoices/f47ac10b.pdf?X-Amz-Signature=fake',
+            'expires_in_seconds' => 300,
+            'file_name' => 'A-2025-0042.pdf',
+        ], $overrides);
+    }
+
+    /** A PDF download response, as the pre-signed URL answers it. */
+    public static function pdf(string $contents = "%PDF-1.7\n%fake invoice\n%%EOF\n"): PromiseInterface
+    {
+        return Factory::response($contents, 200, ['Content-Type' => 'application/pdf', 'Content-Length' => (string) strlen($contents)]);
+    }
+
     /** A customer, like `GET /v1/companies/{id}/customers/{id}`. */
     public static function customer(array $overrides = []): array
     {

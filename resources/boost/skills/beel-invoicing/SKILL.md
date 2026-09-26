@@ -31,7 +31,7 @@ Any task that creates, issues, corrects, voids, lists, renders, emails or report
 5. `create()` a draft (or pass `options.issue_directly`), with an `Idempotency-Key` and an `external_ref` from your own domain.
 6. `issue()` it. Store the invoice id, number, and `verifactu.submission_status`.
 7. Track the AEAT outcome from the invoice or the `verifactu.status.updated` webhook. Act only on `REJECTED`.
-8. Fetch the PDF on demand with `getPdf()` (5-minute URL) or `send()` it by email.
+8. Store the PDF with `$company->invoices->storePdf($id, $path, disk: ...)`, fetch a 5-minute URL on demand with `getPdf()`, or `send()` it by email.
 9. Fix mistakes with `createCorrective()`, not by editing; void only invoices that should never have existed.
 
 ```php

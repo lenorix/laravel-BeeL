@@ -7,7 +7,6 @@ namespace Lenorix\LaravelBeel;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\BeelSdk\Generated\Client;
 use Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource;
-use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyProductsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyRecurringInvoicesResource;
@@ -19,7 +18,7 @@ use Lenorix\BeelSdk\Resource\CompanyScope;
 /**
  * Company scope decorator that keeps the SDK resources intact and exposes its raw client.
  *
- * @property-read CompanyInvoicesResource $invoices
+ * @property-read BeelCompanyInvoices $invoices The SDK's invoices resource plus storePdf().
  * @property-read CompanyCustomersResource $customers
  * @property-read CompanyProductsResource $products
  * @property-read CompanySeriesResource $series
@@ -52,7 +51,9 @@ final class BeelCompany
             throw new \LogicException("Unknown BeeL company resource [{$name}].");
         }
 
-        return $this->scope->{$name};
+        $resource = $this->scope->{$name};
+
+        return $name === 'invoices' ? new BeelCompanyInvoices($resource) : $resource;
     }
 
     public function __call(string $name, array $arguments): mixed

@@ -2,8 +2,10 @@
 
 use Illuminate\Support\Facades\Http;
 use Lenorix\BeelSdk\Beel;
+use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\BeelSdk\Resource\CompanyScope;
 use Lenorix\LaravelBeel\BeelCompany;
+use Lenorix\LaravelBeel\BeelCompanyInvoices;
 use Lenorix\LaravelBeel\BeelHttpClientFactory;
 
 beforeEach(function () {
@@ -19,8 +21,17 @@ it('exposes the company id, sdk scope, and raw client', function () {
 });
 
 it('delegates property access to known scope resources', function () {
-    expect($this->company->invoices)->toBe($this->company->scope->invoices)
-        ->and($this->company->customers)->toBe($this->company->scope->customers);
+    expect($this->company->customers)->toBe($this->company->scope->customers)
+        ->and($this->company->invoices)->toBeInstanceOf(BeelCompanyInvoices::class)
+        ->and($this->company->invoices->resource)->toBe($this->company->scope->invoices)
+        ->and($this->company->invoices->schedule)->toBe($this->company->scope->invoices->schedule);
+});
+
+it('keeps the invoices decorator through withOptions()', function () {
+    $invoices = $this->company->invoices->withOptions(new RequestOptions(idempotencyKey: 'k-1'));
+
+    expect($invoices)->toBeInstanceOf(BeelCompanyInvoices::class)
+        ->and($invoices->resource)->not->toBe($this->company->scope->invoices);
 });
 
 it('throws for unknown scope properties', function () {

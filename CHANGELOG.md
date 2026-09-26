@@ -31,6 +31,13 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.3+.
   - Checks one account by default. Bind `Contracts\WebhookRetryAccounts` to check several, each with its own key.
   - Optional automatic scheduling (`webhook_delivery_retry.schedule`, plus `on_one_server`).
   - The API key needs the `webhooks:read` and `webhooks:write` scopes.
+- `$company->invoices->storePdf($invoiceId, $path, disk:, overwrite:, options:)` streams an issued invoice's PDF from BeeL's pre-signed URL into any Laravel disk:
+  - memory stays at `beel.pdf.buffer_bytes` whatever the PDF's size;
+  - it writes to a temporary file, verifies the PDF signature, length and stored size, then moves it into place;
+  - it retries with a fresh URL on transient failures;
+  - it refuses an existing file unless `overwrite: true`.
+
+  `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.
   - `subscribe(accountRelationship:)` and `--account-relationship` receive events from the accounts you manage (`managed` or `all`; BeeL's default is `own`). `BeelWebhookSubscription` exposes `accountRelationship`.
