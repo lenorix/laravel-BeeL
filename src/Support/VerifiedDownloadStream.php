@@ -20,6 +20,8 @@ final class VerifiedDownloadStream implements StreamInterface
 
     private int $bytesRead = 0;
 
+    private int $position = 0;
+
     private string $head = '';
 
     private ?\UnexpectedValueException $failure = null;
@@ -29,12 +31,16 @@ final class VerifiedDownloadStream implements StreamInterface
     public function read(int $length): string
     {
         $data = $this->stream->read($length);
-        $this->bytesRead += strlen($data);
+        $start = $this->position;
+        $this->position += strlen($data);
+        // The furthest position reached, not the sum of reads: a consumer that rewinds and reads again
+        // (the AWS SDK computes a checksum first) must not count the same bytes twice.
+        $this->bytesRead = max($this->bytesRead, $this->position);
 
         // Fail fast, before the adapter writes megabytes of an error page or a consumed body.
         $needed = $this->kind->headLength();
-        if (strlen($this->head) < $needed) {
-            $this->head .= substr($data, 0, $needed - strlen($this->head));
+        if ($start < $needed) {
+            $this->head = substr($this->head, 0, $start).substr($data, 0, $needed - $start);
             if (strlen($this->head) === $needed && ! $this->kind->matches($this->head)) {
                 throw $this->failure = new \UnexpectedValueException("the download is not {$this->kind->label()}.");
             }
@@ -44,6 +50,17 @@ final class VerifiedDownloadStream implements StreamInterface
         }
 
         return $data;
+    }
+
+    public function seek(int $offset, int $whence = SEEK_SET): void
+    {
+        $this->stream->seek($offset, $whence);
+        $this->position = $this->stream->tell();
+    }
+
+    public function rewind(): void
+    {
+        $this->seek(0);
     }
 
     /**
