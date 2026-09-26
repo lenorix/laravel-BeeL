@@ -32,9 +32,9 @@ Verified against the package source on 2026-09-26.
 | `webhook_delivery_retry.max_attempts` | `8` | Give up after this many attempts (automatic ones included) |
 | `webhook_delivery_retry.schedule` | `null` | Cron expression to auto-schedule `beel:retry-webhook-deliveries` |
 | `webhook_delivery_retry.on_one_server` | `false` | Add `onOneServer()` to that schedule (needs a lock-capable cache) |
-| `pdf.buffer_bytes` | `65536` | `storePdf()` read size; memory stays about this whatever the PDF's size |
-| `pdf.read_timeout` | `30` | Seconds without a byte before a PDF download is abandoned |
-| `pdf.attempts` | `3` | Full `storePdf()` attempts, each with a new URL |
+| `downloads.buffer_bytes` | `65536` | Read size of document downloads (`storePdf()`, ...); memory stays about this whatever the size |
+| `downloads.read_timeout` | `30` | Seconds without a byte before a download is abandoned |
+| `downloads.attempts` | `3` | Full download attempts, each with a new pre-signed URL |
 
 ## BeelManager (singleton) and the `LaravelBeel` facade
 
@@ -73,17 +73,19 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 `php artisan beel:check [--api-key=] [--company-id=] [--account-id=]` is read-only (GET requests only, no test deliveries); without options it checks the default credentials (`CredentialsResolver`), with them one tenant's. It reports: API key presence and sandbox/live vs `APP_ENV`; `GET /v1/me/identity` (account, environment, and the key's scopes, which that endpoint returns without needing any scope) vs `services.beel.account_id`; the default company's `issuingReadiness()` blockers; missing `webhooks:read`/`webhooks:write`; whether an active HTTPS subscription points at `APP_URL` + `webhook_path` (per-tenant sub-paths count; trailing slashes ignored) and that no two subscriptions share a URL; for integrator keys (`accounts:*` scopes), a note and a warning for each matching subscription lacking the provisioner events; the webhook secret (default resolver only); and the dedupe store (`array`/`null` error, `file` warning). Errors exit 1, warnings exit 0.
 
-## Storing invoice PDFs
+## Storing BeeL documents (PDFs, previews, representation)
 
 `$company->invoices` is `Lenorix\LaravelBeel\BeelCompanyInvoices`: the SDK's `CompanyInvoicesResource` (every method, `schedule`, and `withOptions()` keeps the decorator; the SDK resource is `->resource`) plus:
 
 `storePdf(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string`
 
-- Gets a fresh pre-signed URL (`getPdf()`), streams it with Laravel's HTTP client (`stream`, no BeeL `Authorization`) into `Storage::disk($disk)->getDriver()->writeStream()` on a temporary file next to `$path` (same extension), then moves it into place. Memory stays at about `beel.pdf.buffer_bytes` (64 KiB) on local/FTP/SFTP whatever the PDF's size; other adapters add their own bounded buffer (S3: `php://temp`, up to 2 MB in memory). Proxy/TLS keys of `beel.http.options` apply to the download; a rename refused over an existing file (SFTP) falls back to delete + rename when `overwrite`. Needs `allow_url_fopen` to stream (else cURL buffers in `php://temp`).
+- Gets a fresh pre-signed URL (`getPdf()`), streams it with Laravel's HTTP client (`stream`, no BeeL `Authorization`) into `Storage::disk($disk)->getDriver()->writeStream()` on a temporary file next to `$path` (same extension), then moves it into place. Memory stays at about `beel.downloads.buffer_bytes` (64 KiB) on local/FTP/SFTP whatever the PDF's size; other adapters add their own bounded buffer (S3: `php://temp`, up to 2 MB in memory). Proxy/TLS keys of `beel.http.options` apply to the download; a rename refused over an existing file (SFTP) falls back to delete + rename when `overwrite`. Needs `allow_url_fopen` to stream (else cURL buffers in `php://temp`).
 - Moves only after verifying: HTTP 200, `%PDF-` signature, bytes == Content-Length, stored size == bytes. A failure never leaves a partial file nor touches an existing one.
-- Retries the whole attempt with a new URL (`beel.pdf.attempts`, 3) on connection errors, 5xx, 403 (expired URL), 408, 429 and failed checks; idle timeout `beel.pdf.read_timeout` (30 s).
-- Throws `Exceptions\InvoicePdfAlreadyExists` (path exists and not `overwrite`; checked before calling BeeL and before the move), `Exceptions\InvoicePdfNotReady` (BeeL answered 202; `retryAfter` seconds, from the SDK's `BeelNotReadyError`), `Exceptions\InvoicePdfDownloadFailed` (`attempts`; message never contains the URL), or the SDK's `BeelApiError` (`INVOICE_NOT_ISSUED_NO_PDF` for drafts).
-- `$options` go to the disk (`visibility`, ...); `ContentType` defaults to `application/pdf`.
+- Retries the whole attempt with a new URL (`beel.downloads.attempts`, 3) on connection errors, 5xx, 403 (expired URL), 408, 429 and failed checks; idle timeout `beel.downloads.read_timeout` (30 s).
+- Throws `Exceptions\DocumentAlreadyExists` (path exists and not `overwrite`; checked before calling BeeL and before the move), `Exceptions\InvoicePdfNotReady` (BeeL answered 202; `retryAfter` seconds, from the SDK's `BeelNotReadyError`), `Exceptions\DocumentDownloadFailed` (`document`, `attempts`; message never contains the URL), or the SDK's `BeelApiError` (`INVOICE_NOT_ISSUED_NO_PDF` for drafts).
+- `$options` go to the disk (`visibility`, ...); `ContentType` defaults to the document's type.
+- Same machinery, same guarantees and exceptions: `$company->invoices->storePreview($invoiceId, $path, disk:, overwrite:, options:)` stores the invoice preview image (WebP, drafts included; checks `RIFF`...`WEBP`), and `$company->storeRepresentationDocument($path, disk:, overwrite:, options:)` the AEAT representation PDF (the generated one while unsigned, the signed copy once submitted; BeeL answers 400 before it is generated).
+- Not available yet: the invoice ZIP archive (`createPdfArchive()`) and spreadsheet export (`export()`) come in BeeL's response body, and `lenorix/beel-sdk` 0.4 drops that body (returns null). Don't work around it with `raw`; wait for the SDK.
 - A `ResponseReceived` listener that reads `$response->body()` consumes the stream: `storePdf()` then fails ("empty") instead of storing a broken file.
 - Queued: `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($invoiceId, $path, disk:, overwrite:, options:, companyId:, apiKey:)`. It releases itself for BeeL's `retryAfter` while the PDF is generated, treats an existing file (no `overwrite`) as done, fails at once on non-retryable 4xx (draft, unknown invoice), and lets the queue retry download failures (5 tries, backoff 10/30/60/120 s). Its payload is encrypted (`ShouldBeEncrypted`, needs `APP_KEY`). Tenant-bound `CredentialsResolver`s return null in workers: pass `companyId` and `apiKey`. Don't download inside a webhook listener; dispatch this job instead (e.g. on `invoice.pdf.generated`).
 - Spatie Media Library: chain the job with the `addMediaFromDisk()` step, on a shared disk (workers may run on different servers), and clean up in `catch()`:

@@ -32,12 +32,13 @@ return [
         // Needs a cache store with atomic locks (redis, memcached, database, dynamodb, ...).
         'on_one_server' => false,
     ],
-    // `$company->invoices->storePdf()`: streams the PDF from BeeL's pre-signed URL into a Laravel disk.
-    'pdf' => [
+    // storePdf(), storePreview() and storeRepresentationDocument(): stream a document from BeeL's
+    // pre-signed URL into a Laravel disk.
+    'downloads' => [
         // Bytes read from the download per step. Memory stays at about this much (plus the disk
-        // adapter's own buffer, e.g. S3's upload part) whatever the PDF's size.
+        // adapter's own buffer, e.g. S3's upload part) whatever the document's size.
         'buffer_bytes' => 65536,
-        // Seconds without receiving any byte before the download is abandoned.
+        // Seconds without receiving any byte before a download is abandoned.
         'read_timeout' => 30,
         // Full attempts (new URL, new download) on connection errors, 5xx, an expired URL or a
         // download that fails verification.

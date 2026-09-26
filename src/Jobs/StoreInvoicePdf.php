@@ -11,7 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelManager;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 
 /**
@@ -61,7 +61,7 @@ final class StoreInvoicePdf implements ShouldBeEncrypted, ShouldQueue
                 ->invoices->storePdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
         } catch (InvoicePdfNotReady $exception) {
             $this->release($exception->retryAfter ?? 5);
-        } catch (InvoicePdfAlreadyExists) {
+        } catch (DocumentAlreadyExists) {
             // Already stored (e.g. by an earlier dispatch): nothing left to do.
         } catch (BeelApiError $exception) {
             if (self::isPermanent($exception)) {

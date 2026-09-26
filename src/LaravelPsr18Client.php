@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel;
 
-use Http\Discovery\Psr17FactoryDiscovery;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Psr\Http\Client\ClientExceptionInterface;
@@ -35,13 +34,9 @@ final class LaravelPsr18Client implements ClientInterface
             throw new LaravelClientException($exception->getMessage(), $exception);
         }
 
-        $psrResponse = Psr17FactoryDiscovery::findResponseFactory()->createResponse($response->status());
-        foreach ($response->headers() as $name => $values) {
-            $psrResponse = $psrResponse->withHeader($name, $values);
-        }
-        $stream = Psr17FactoryDiscovery::findStreamFactory()->createStream($response->body());
-
-        return $psrResponse->withBody($stream);
+        // Guzzle's own PSR-7 response: its body stays in php://temp (spilling to disk past 2 MB)
+        // instead of being copied into a PHP string, so a large export doesn't take its size in memory.
+        return $response->toPsrResponse();
     }
 }
 

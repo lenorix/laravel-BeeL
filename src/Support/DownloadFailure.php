@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel\Support;
 
-/** @internal One failed attempt of InvoicePdfStorage; its message never contains the pre-signed URL. */
-final class PdfDownloadFailure extends \RuntimeException
+/** @internal One failed attempt of SignedDownloadStorage; its message never contains the pre-signed URL. */
+final class DownloadFailure extends \RuntimeException
 {
     public function __construct(string $message, public readonly bool $retryable)
     {

@@ -32,7 +32,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
   - Optional automatic scheduling (`webhook_delivery_retry.schedule`, plus `on_one_server`).
   - The API key needs the `webhooks:read` and `webhooks:write` scopes.
 - `$company->invoices->storePdf($invoiceId, $path, disk:, overwrite:, options:)` streams an issued invoice's PDF from BeeL's pre-signed URL into any Laravel disk:
-  - memory stays at `beel.pdf.buffer_bytes` whatever the PDF's size;
+  - memory stays at `beel.downloads.buffer_bytes` whatever the PDF's size;
   - it writes to a temporary file, verifies the PDF signature, length and stored size, then moves it into place;
   - it retries with a fresh URL on transient failures;
   - it refuses an existing file unless `overwrite: true`.
@@ -41,6 +41,8 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
 
   `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
 - Per-type webhook events in `Events\Webhooks` (`InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...), dispatched right after `BeelWebhookReceived` for known types, with typed `data()`.
+- `$company->invoices->storePreview()` (the invoice's WebP preview) and `$company->storeRepresentationDocument()` (the AEAT representation PDF) store those documents the same way as `storePdf()`. The download settings are `beel.downloads.*`, and the exceptions are `DocumentAlreadyExists` and `DocumentDownloadFailed`.
+- Responses from BeeL keep their body in Guzzle's `php://temp` stream instead of being copied into a PHP string.
 - `beel:check --api-key= --company-id= --account-id=` diagnoses one tenant instead of the default credentials.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.

@@ -14,18 +14,16 @@ use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\UnableToMoveFile;
-use Lenorix\BeelSdk\Exception\BeelNotReadyError;
-use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
+use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 
 /**
- * Streams an invoice PDF from BeeL's pre-signed URL into a Laravel disk. See BeelCompanyInvoices::storePdf().
+ * Streams a document from one of BeeL's pre-signed URLs into a Laravel disk, verified and atomic.
+ * See BeelCompanyInvoices::storePdf() for the guarantees.
  *
  * @internal
  */
-final class InvoicePdfStorage
+final class SignedDownloadStorage
 {
     public function __construct(
         private HttpFactory $http,
@@ -33,34 +31,34 @@ final class InvoicePdfStorage
         private ConfigRepository $config,
     ) {}
 
-    /** @param array<string, mixed> $options */
-    public function store(CompanyInvoicesResource $invoices, string $invoiceId, string $path, ?string $disk, bool $overwrite, array $options): string
+    /**
+     * @param  \Closure(): string  $signedUrl  Asks BeeL for a fresh pre-signed URL; called once per attempt.
+     * @param  string  $document  What is stored, for messages (e.g. "the PDF of invoice X").
+     * @param  array<string, mixed>  $options
+     */
+    public function store(\Closure $signedUrl, DocumentKind $kind, string $document, string $path, ?string $disk, bool $overwrite, array $options): string
     {
         $filesystem = $this->driver($disk);
 
         // Before calling BeeL, so an existing file costs no API call and no download.
         if (! $overwrite && $filesystem->fileExists($path)) {
-            throw new InvoicePdfAlreadyExists($invoiceId, $path);
+            throw new DocumentAlreadyExists($document, $path);
         }
 
-        $attempts = max(1, (int) $this->config->get('beel.pdf.attempts', 3));
-        $options += ['ContentType' => 'application/pdf'];
+        $attempts = max(1, (int) $this->config->get('beel.downloads.attempts', 3));
+        $options += ['ContentType' => $kind->contentType()];
 
         for ($attempt = 1; ; $attempt++) {
             // A fresh URL every attempt: they expire after five minutes.
-            try {
-                $pdf = $invoices->getPdf($invoiceId);
-            } catch (BeelNotReadyError $notReady) {
-                throw new InvoicePdfNotReady($invoiceId, $notReady->retryAfter, $notReady);
-            }
+            $url = $signedUrl();
 
             try {
-                $this->downloadInto($filesystem, $pdf->getDownloadUrl(), $path, $overwrite, $options, $invoiceId);
+                $this->downloadInto($filesystem, $url, $kind, $path, $overwrite, $options, $document);
 
                 return $path;
-            } catch (PdfDownloadFailure $failure) {
+            } catch (DownloadFailure $failure) {
                 if (! $failure->retryable || $attempt >= $attempts) {
-                    throw new InvoicePdfDownloadFailed($invoiceId, $failure->getMessage(), $attempt);
+                    throw new DocumentDownloadFailed($document, $failure->getMessage(), $attempt);
                 }
 
                 Sleep::usleep(max(0, (int) $this->config->get('beel.http.retry_delay_ms', 100)) * 1000);
@@ -69,19 +67,19 @@ final class InvoicePdfStorage
     }
 
     /** @param array<string, mixed> $options */
-    private function downloadInto(FilesystemOperator $filesystem, string $url, string $path, bool $overwrite, array $options, string $invoiceId): void
+    private function downloadInto(FilesystemOperator $filesystem, string $url, DocumentKind $kind, string $path, bool $overwrite, array $options, string $document): void
     {
         // A plain request: the pre-signed URL carries its own authorization, so BeeL's API key must
         // never reach it, and a half-read stream can't be retried by middleware anyway.
         try {
             $response = $this->http->withOptions($this->transportOptions() + [
                 'stream' => true,
-                'read_timeout' => (float) $this->config->get('beel.pdf.read_timeout', 30),
+                'read_timeout' => (float) $this->config->get('beel.downloads.read_timeout', 30),
                 'connect_timeout' => (float) $this->config->get('beel.http.connect_timeout', 10),
                 'timeout' => 0,
             ])->get($url);
         } catch (ConnectionException $exception) {
-            throw new PdfDownloadFailure(self::redact($exception->getMessage(), $url), retryable: true);
+            throw new DownloadFailure(self::redact($exception->getMessage(), $url), retryable: true);
         }
 
         $status = $response->status();
@@ -89,13 +87,13 @@ final class InvoicePdfStorage
             $reason = "the download answered HTTP {$status}.";
 
             // 403 is an expired or rejected pre-signed URL: a new one may work.
-            throw new PdfDownloadFailure($reason, retryable: in_array($status, [403, 408, 429], true) || $status >= 500);
+            throw new DownloadFailure($reason, retryable: in_array($status, [403, 408, 429], true) || $status >= 500);
         }
 
         // Guzzle drops Content-Length when it decodes a Content-Encoding, so a remaining one always
         // describes the bytes read here.
         $length = $response->header('Content-Length');
-        $body = new VerifiedPdfStream($response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null);
+        $body = new VerifiedDownloadStream($response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null, $kind);
 
         // Same directory, so the final move is a rename on local disks; ends like the target so disks
         // that guess the MIME type from the extension (S3, GCS) keep treating it as a PDF.
@@ -103,7 +101,7 @@ final class InvoicePdfStorage
         $temporary = ($directory === '.' ? '' : $directory.'/').'.beel-'.Str::random(16).'-'.basename($path);
 
         $resource = StreamWrapper::getResource($body);
-        stream_set_chunk_size($resource, max(8192, (int) $this->config->get('beel.pdf.buffer_bytes', 65536)));
+        stream_set_chunk_size($resource, max(8192, (int) $this->config->get('beel.downloads.buffer_bytes', 65536)));
 
         try {
             $filesystem->writeStream($temporary, $resource, $options);
@@ -116,7 +114,7 @@ final class InvoicePdfStorage
 
             // Checked again right before replacing, for a file created during the download.
             if (! $overwrite && $filesystem->fileExists($path)) {
-                throw new InvoicePdfAlreadyExists($invoiceId, $path);
+                throw new DocumentAlreadyExists($document, $path);
             }
 
             $this->moveIntoPlace($filesystem, $temporary, $path, $overwrite);
@@ -127,11 +125,11 @@ final class InvoicePdfStorage
                 // Best effort: the original failure matters more than a leftover temporary file.
             }
 
-            if ($exception instanceof InvoicePdfAlreadyExists) {
+            if ($exception instanceof DocumentAlreadyExists) {
                 throw $exception;
             }
 
-            throw new PdfDownloadFailure(self::redact(($body->failure() ?? $exception)->getMessage(), $url), retryable: true);
+            throw new DownloadFailure(self::redact(($body->failure() ?? $exception)->getMessage(), $url), retryable: true);
         } finally {
             if (is_resource($resource)) {
                 fclose($resource);
@@ -177,7 +175,7 @@ final class InvoicePdfStorage
 
         // The League driver always throws on failure, whatever the disk's `throw` option says.
         if (! $filesystem instanceof FilesystemAdapter) {
-            throw new \InvalidArgumentException('storePdf() needs a Flysystem-based Laravel disk.');
+            throw new \InvalidArgumentException('Storing BeeL documents needs a Flysystem-based Laravel disk.');
         }
 
         return $filesystem->getDriver();
@@ -188,6 +186,6 @@ final class InvoicePdfStorage
     {
         $base = strtok($url, '?');
 
-        return str_replace([$url, is_string($base) ? $base : $url], '[pre-signed PDF URL]', $message);
+        return str_replace([$url, is_string($base) ? $base : $url], '[pre-signed URL]', $message);
     }
 }

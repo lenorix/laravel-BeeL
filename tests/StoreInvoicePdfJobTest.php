@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
 use Lenorix\LaravelBeel\Events\Webhooks\InvoicePdfGenerated;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
+use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 use Lenorix\LaravelBeel\Testing\BeelFake;
 use Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks;
@@ -94,7 +94,7 @@ it('fails at once when retrying can not help, such as a draft', function () {
 it('lets the queue retry a download that failed', function () {
     fakeJobPdfApi(download: Http::response('', 503));
 
-    expect(fn () => runJob(new StoreInvoicePdf('inv-1', 'a.pdf', disk: 'invoices')))->toThrow(InvoicePdfDownloadFailed::class);
+    expect(fn () => runJob(new StoreInvoicePdf('inv-1', 'a.pdf', disk: 'invoices')))->toThrow(DocumentDownloadFailed::class);
 });
 
 it('keeps its payload, which may hold an API key, encrypted in the queue', function () {

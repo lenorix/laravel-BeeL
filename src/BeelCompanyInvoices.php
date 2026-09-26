@@ -6,11 +6,13 @@ namespace Lenorix\LaravelBeel;
 
 use Illuminate\Container\Container;
 use Lenorix\BeelSdk\Exception\BeelApiError;
+use Lenorix\BeelSdk\Exception\BeelNotReadyError;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
+use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
-use Lenorix\LaravelBeel\Support\InvoicePdfStorage;
+use Lenorix\LaravelBeel\Support\DocumentKind;
+use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
 
 /**
  * The SDK's company invoices resource plus storePdf(). Every other method and property is the
@@ -27,7 +29,7 @@ final class BeelCompanyInvoices
     /**
      * Store an issued invoice's PDF on a Laravel disk (local, S3, FTP, SFTP, ...) and return the path.
      *
-     * The PDF is streamed from BeeL's pre-signed URL into the disk in `beel.pdf.buffer_bytes` steps
+     * The PDF is streamed from BeeL's pre-signed URL into the disk in `beel.downloads.buffer_bytes` steps
      * (64 KiB), never loaded whole: on local, FTP and SFTP disks memory stays at about that, whatever
      * the PDF's size. Other adapters add their own bounded buffer: the S3 one keeps an upload of
      * unknown size in `php://temp` (up to 2 MB in memory, then disk), so a small PDF sits there whole.
@@ -36,10 +38,10 @@ final class BeelCompanyInvoices
      * `beel.http.options` apply to the download too.
      *
      * It writes a temporary file next to the target and moves it into place only once the download
-     * is complete: it must start with the PDF signature and match the declared length and the stored
+     * is complete: it must start with the PDF signature (`%PDF-`) and match the declared length and the stored
      * size. So a failed attempt never leaves a partial file, and with `overwrite: true` never touches
      * the existing one. Connection errors, 5xx, an expired URL (403) and failed checks are retried
-     * with a new URL, up to `beel.pdf.attempts`.
+     * with a new URL, up to `beel.downloads.attempts`.
      *
      * The existence check (without `overwrite`) runs before calling BeeL and again before the move;
      * a concurrent writer between that last check and the move isn't prevented. A process killed
@@ -50,16 +52,46 @@ final class BeelCompanyInvoices
      * @param  array<string, mixed>  $options  Passed to the disk (e.g. `visibility`); `ContentType`
      *                                         defaults to `application/pdf`.
      *
-     * @throws InvoicePdfAlreadyExists The path exists and `$overwrite` is false.
+     * @throws DocumentAlreadyExists The path exists and `$overwrite` is false.
      * @throws InvoicePdfNotReady BeeL is still generating the PDF; try again shortly.
-     * @throws InvoicePdfDownloadFailed Every attempt failed; nothing was written to `$path`.
+     * @throws DocumentDownloadFailed Every attempt failed; nothing was written to `$path`.
      * @throws BeelApiError From BeeL, e.g. a draft has no PDF
      *                      (`INVOICE_NOT_ISSUED_NO_PDF`).
      */
     public function storePdf(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string
     {
-        return Container::getInstance()->make(InvoicePdfStorage::class)
-            ->store($this->resource, $invoiceId, $path, $disk, $overwrite, $options);
+        return $this->storage()->store(
+            function () use ($invoiceId): string {
+                try {
+                    return $this->resource->getPdf($invoiceId)->getDownloadUrl();
+                } catch (BeelNotReadyError $notReady) {
+                    throw new InvoicePdfNotReady($invoiceId, $notReady->retryAfter, $notReady);
+                }
+            },
+            DocumentKind::Pdf, "the PDF of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
+        );
+    }
+
+    /**
+     * Store an invoice's preview image (WebP, drafts included) on a Laravel disk and return the path,
+     * with the same streaming, verification and atomic write as storePdf().
+     *
+     * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to `image/webp`.
+     *
+     * @throws DocumentAlreadyExists The path exists and `$overwrite` is false.
+     * @throws DocumentDownloadFailed Every attempt failed; nothing was written to `$path`.
+     */
+    public function storePreview(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string
+    {
+        return $this->storage()->store(
+            fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
+            DocumentKind::Webp, "the preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
+        );
+    }
+
+    private function storage(): SignedDownloadStorage
+    {
+        return Container::getInstance()->make(SignedDownloadStorage::class);
     }
 
     public function __get(string $name): mixed

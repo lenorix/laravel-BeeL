@@ -18,8 +18,8 @@ use League\Flysystem\UnableToMoveFile;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\LaravelBeel\BeelManager;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
-use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
+use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\Testing\BeelFake;
 
@@ -82,7 +82,7 @@ it('refuses an existing file before calling BeeL', function () {
     fakePdfDownloads(BeelFake::pdf());
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(InvoicePdfAlreadyExists::class, 'overwrite: true');
+        ->toThrow(DocumentAlreadyExists::class, 'overwrite: true');
 
     Http::assertNothingSent();
     expect(Storage::disk('invoices')->get('a.pdf'))->toBe('previous');
@@ -103,7 +103,7 @@ it('leaves the existing file untouched when an overwrite fails', function () {
     fakePdfDownloads(...array_fill(0, 3, fn () => Http::response('<Error>AccessDenied</Error>', 200)));
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices', overwrite: true))
-        ->toThrow(InvoicePdfDownloadFailed::class, 'not a PDF');
+        ->toThrow(DocumentDownloadFailed::class, 'not a PDF');
 
     expect(Storage::disk('invoices')->get('a.pdf'))->toBe('previous')
         ->and(storedFiles())->toBe(['a.pdf']);
@@ -131,11 +131,11 @@ it('asks for a new URL when the previous one expired', function () {
 });
 
 it('gives up after the configured attempts, writing nothing', function () {
-    config()->set('beel.pdf.attempts', 2);
+    config()->set('beel.downloads.attempts', 2);
     fakePdfDownloads(Http::response('', 503), Http::response('', 503), BeelFake::pdf());
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(fn (InvoicePdfDownloadFailed $e) => expect($e->attempts)->toBe(2)->and($e->getMessage())->toContain('HTTP 503'));
+        ->toThrow(fn (DocumentDownloadFailed $e) => expect($e->attempts)->toBe(2)->and($e->getMessage())->toContain('HTTP 503'));
 
     expect(storedFiles())->toBe([]);
     Sleep::assertSleptTimes(1);
@@ -145,7 +145,7 @@ it('does not retry a download that can not succeed', function () {
     fakePdfDownloads(Http::response('', 404), BeelFake::pdf());
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(fn (InvoicePdfDownloadFailed $e) => expect($e->attempts)->toBe(1));
+        ->toThrow(fn (DocumentDownloadFailed $e) => expect($e->attempts)->toBe(1));
 
     expect(pdfUrlRequests())->toBe(1);
 });
@@ -154,7 +154,7 @@ it('keeps the pre-signed URL out of error messages', function () {
     fakePdfDownloads(...array_fill(0, 3, fn () => throw new ConnectionException('cURL error 28: Operation timed out for '.PDF_URL)));
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(function (InvoicePdfDownloadFailed $e) {
+        ->toThrow(function (DocumentDownloadFailed $e) {
             expect($e->getMessage())->toContain('timed out')->not->toContain('X-Amz-Signature')->not->toContain('beel-pdfs.s3')
                 ->and($e->getPrevious())->toBeNull();
         });
@@ -166,7 +166,7 @@ it('fails loudly when something else consumed the download', function () {
     fakePdfDownloads(...array_fill(0, 3, fn () => BeelFake::pdf()));
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(InvoicePdfDownloadFailed::class, 'empty');
+        ->toThrow(DocumentDownloadFailed::class, 'empty');
 
     expect(storedFiles())->toBe([]);
 });
@@ -252,7 +252,7 @@ it('uses the same small memory for any PDF size, reading in buffer-sized steps',
 });
 
 it('reads in the configured buffer size', function () {
-    config()->set('beel.pdf.buffer_bytes', 256 * 1024);
+    config()->set('beel.downloads.buffer_bytes', 256 * 1024);
     $reads = [];
     fakePdfDownloads(function () use (&$reads) {
         return Create::promiseFor(lazyPdf(2 * 1024 * 1024, $reads));
