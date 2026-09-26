@@ -139,12 +139,16 @@ class ProcessBeelWebhook implements ShouldQueue
 BeeL retries a failed delivery only 5 times over about 75 seconds, and not at all after a 4xx. As a safety net, `php artisan beel:retry-webhook-deliveries` reads each subscription's delivery history and asks BeeL to redeliver every event with no successful attempt, so the event goes through the normal verified endpoint again and BeeL records the delivery:
 
 - Events with any successful attempt are skipped; attempts are grouped by BeeL's event id.
-- Only events first attempted within `max_age_minutes` (default 24 h) are retried.
+- Only events first attempted within `max_age_minutes` (default 24 h) are retried, and not while their latest attempt is under 2 minutes old, so a run never races BeeL's own automatic retries (which finish about 75 s after the first attempt).
 - Events that already have `max_attempts` attempts (default 8, BeeL's automatic ones included) are given up: the app never received them, so the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned` (`accountId`, `subscriptionId`, `eventId`, `eventType`, `attempts`, `lastDeliveryId`, `lastHttpStatus`, `lastError`, and the `payload` BeeL tried to send) so the app can alert someone or re-read the affected resource from the API. It is dispatched on every run while the event is inside the retry window, so deduplicate notifications on `eventId`.
 - Subscriptions BeeL has deactivated (it pauses them after 25 consecutive failures over more than 48 hours) are not retried: the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`), so the app decides how to notify or react.
 - The command exits with a failure code when something was given up, a retry was rejected, or a subscription is inactive, so the scheduler or your monitoring notices.
 
-Options: `--account-id=`, `--api-key=` (default to `services.beel.*`), `--webhook-id=` (repeatable), `--max-age=` (minutes), `--max-attempts=`, `--dry-run`. It needs an account id (`services.beel.account_id`) and a key with webhook read and write scopes.
+Credentials: listing subscriptions and deliveries needs the `webhooks:read` scope and retrying needs `webhooks:write`. To keep `webhooks:write` off the app's main key, set a dedicated `api_key` (and `account_id`) under `webhook_delivery_retry` in the published `config/beel.php`, for example with `env('BEEL_WEBHOOK_RETRY_API_KEY')`; otherwise it uses `services.beel.key` and `services.beel.account_id`.
+
+Options: `--account-id=`, `--api-key=`, `--webhook-id=` (repeatable), `--max-age=` (minutes), `--max-attempts=`, `--dry-run`.
+
+Both events are dispatched on every run while the condition persists, so deduplicate or throttle notifications (on `eventId` / `subscriptionId`). A listener that throws is reported and does not stop the run; an API error on one subscription is reported and the others are still processed.
 
 To run it periodically, either set a cron expression in `config/beel.php`:
 
@@ -160,7 +164,22 @@ or schedule it yourself, for example in `routes/console.php`:
 Schedule::command('beel:retry-webhook-deliveries')->everyFifteenMinutes()->withoutOverlapping();
 ```
 
-Either way Laravel's scheduler (`schedule:run`) must be running. For several accounts with their own credentials, schedule one call per account passing `--account-id` and `--api-key`.
+Either way Laravel's scheduler (`schedule:run`) must be running. For several accounts with their own credentials, run it in-process so API keys never appear on a command line (visible in `ps` and `schedule:list`):
+
+```php
+use Illuminate\Support\Facades\Artisan;
+
+Schedule::call(function () {
+    foreach (Tenant::all() as $tenant) {
+        Artisan::call('beel:retry-webhook-deliveries', [
+            '--account-id' => $tenant->beel_account_id,
+            '--api-key' => $tenant->beel_webhooks_api_key,
+        ]);
+    }
+})->everyFifteenMinutes()->withoutOverlapping();
+```
+
+Never pass `--api-key` through `Schedule::command()`.
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 

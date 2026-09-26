@@ -13,6 +13,11 @@ return [
         'max_age_minutes' => 1440,
         // Give up (and exit with failure) once an event has this many attempts, automatic ones included.
         'max_attempts' => 8,
+        // Retrying needs the webhooks:write scope. To keep that scope off the app's main key, set a
+        // dedicated key (and account) here in the published config, e.g. env('BEEL_WEBHOOK_RETRY_API_KEY').
+        // null falls back to services.beel.key / services.beel.account_id.
+        'api_key' => null,
+        'account_id' => null,
         // Cron expression to schedule the command automatically, e.g. '*/15 * * * *'.
         // null leaves scheduling to the app. Either way `schedule:run` must be running.
         'schedule' => null,

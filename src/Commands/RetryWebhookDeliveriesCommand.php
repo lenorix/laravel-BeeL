@@ -30,14 +30,21 @@ final class RetryWebhookDeliveriesCommand extends Command
 
     private const PAGE_SIZE = 100;
 
+    /**
+     * BeeL's own retries of a delivery (5 attempts, backing off 5/10/20/40 s) finish about 75 s after
+     * the first one. Leave an event alone while its latest attempt is this recent, so a run never
+     * races BeeL's automatic retries, a dashboard retry, or an overlapping run.
+     */
+    private const GRACE_SECONDS = 120;
+
     private bool $healthy = true;
 
     public function handle(BeelManager $manager): int
     {
         try {
             $account = $manager->account(
-                apiKey: $this->stringOption('api-key'),
-                accountId: $this->stringOption('account-id'),
+                apiKey: $this->stringOption('api-key') ?? $this->stringConfig('beel.webhook_delivery_retry.api_key'),
+                accountId: $this->stringOption('account-id') ?? $this->stringConfig('beel.webhook_delivery_retry.account_id'),
             );
         } catch (\InvalidArgumentException $exception) {
             $this->error($exception->getMessage());
@@ -49,8 +56,25 @@ final class RetryWebhookDeliveriesCommand extends Command
         $maxAttempts = (int) ($this->stringOption('max-attempts') ?? config('beel.webhook_delivery_retry.max_attempts', 8));
         $cutoff = Carbon::now()->subMinutes($maxAge);
 
-        foreach ($this->subscriptionIds($account) as $webhookId) {
-            $this->deliveries($account, $webhookId)
+        try {
+            $webhookIds = $this->subscriptionIds($account);
+        } catch (\Throwable $exception) {
+            $this->error("Could not list the webhook subscriptions of account {$account->accountId}: {$exception->getMessage()}");
+
+            return self::FAILURE;
+        }
+
+        foreach ($webhookIds as $webhookId) {
+            try {
+                $deliveries = $this->deliveries($account, $webhookId);
+            } catch (\Throwable $exception) {
+                $this->error("Could not read the deliveries of webhook {$webhookId}: {$exception->getMessage()}");
+                $this->healthy = false;
+
+                continue;
+            }
+
+            $deliveries
                 ->groupBy(fn (WebhookDeliveryLog $log) => $log->getWebhookEventId())
                 ->each(fn (Collection $attempts, string $eventId) => $this->handleEvent($account, $webhookId, $eventId, $attempts, $cutoff, $maxAttempts));
         }
@@ -72,6 +96,9 @@ final class RetryWebhookDeliveriesCommand extends Command
 
         /** @var WebhookDeliveryLog $latest */
         $latest = $attempts->sortByDesc(fn (WebhookDeliveryLog $log) => $log->getAttemptNumber())->first();
+        if ($latest->getDeliveredAt()->getTimestamp() > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()) {
+            return;
+        }
         $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId}";
 
         if ($latest->getAttemptNumber() >= $maxAttempts) {
@@ -147,7 +174,7 @@ final class RetryWebhookDeliveriesCommand extends Command
             'last_http_status' => $event->lastHttpStatus,
             'last_error' => $event->lastError,
         ]);
-        Event::dispatch($event);
+        $this->dispatchSafely($event);
 
         $this->healthy = false;
     }
@@ -183,9 +210,19 @@ final class RetryWebhookDeliveriesCommand extends Command
             'consecutive_failures' => $event->consecutiveFailures,
             'last_error' => $event->lastError,
         ]);
-        Event::dispatch($event);
+        $this->dispatchSafely($event);
 
         $this->healthy = false;
+    }
+
+    /** A failing notification listener must not stop the safety net from handling the other events. */
+    private function dispatchSafely(object $event): void
+    {
+        try {
+            Event::dispatch($event);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
     }
 
     /** @return Collection<int, WebhookDeliveryLog> */
@@ -213,6 +250,13 @@ final class RetryWebhookDeliveriesCommand extends Command
         } while ($result->getPagination()->getHasNext());
 
         return $items;
+    }
+
+    private function stringConfig(string $key): ?string
+    {
+        $value = config($key);
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private function stringOption(string $name): ?string

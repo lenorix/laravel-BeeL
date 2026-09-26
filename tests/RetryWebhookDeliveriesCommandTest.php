@@ -174,6 +174,62 @@ it('does not dispatch the abandoned event while an event is still being retried'
     Event::assertNotDispatched(BeelWebhookDeliveryAbandoned::class);
 });
 
+it('leaves events alone while BeeL may still be retrying them automatically', function () {
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
+        array_merge(beelDelivery('just-now', 'evt-burst', 1, false, 0), ['delivered_at' => now()->subSeconds(30)->format(DATE_ATOM)]),
+        beelDelivery('settled', 'evt-settled', 5, false, 5),
+    ]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['settled']);
+});
+
+it('uses the dedicated retry credentials from config instead of the app key', function () {
+    config()->set('services.beel.account_id', null);
+    config()->set('beel.webhook_delivery_retry.account_id', 'acc-1');
+    config()->set('beel.webhook_delivery_retry.api_key', 'beel_sk_test_webhooks_write');
+
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d1']);
+    Http::assertSent(fn (ClientRequest $request) => $request->method() === 'POST'
+        && $request->hasHeader('Authorization', 'Bearer beel_sk_test_webhooks_write'));
+});
+
+it('keeps going when a notification listener throws', function () {
+    Event::listen(BeelWebhookSubscriptionInactive::class, fn () => throw new RuntimeException('Slack is down'));
+
+    fakeBeelWebhookApi([beelSubscription('wh-off', active: false), beelSubscription('wh-1')], [
+        'wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]],
+    ]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertFailed();
+
+    expect(retriedDeliveryIds())->toBe(['d1']);
+});
+
+it('keeps going when reading one subscription fails', function () {
+    Http::fake(function (ClientRequest $request) {
+        $path = parse_url($request->url(), PHP_URL_PATH);
+
+        return match (true) {
+            str_ends_with($path, '/webhooks/wh-bad/deliveries') => Http::response(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'no']], 403),
+            str_ends_with($path, '/webhooks/wh-1/deliveries') => Http::response(beelPage('deliveries', [beelDelivery('d1', 'evt-1', 1, false, 5)]), 200),
+            str_ends_with($path, '/accounts/acc-1/webhooks') => Http::response(beelPage('webhooks', [beelSubscription('wh-bad'), beelSubscription('wh-1')]), 200),
+            default => Http::response(['success' => true, 'data' => ['id' => 'x']], 200),
+        };
+    });
+
+    $this->artisan('beel:retry-webhook-deliveries')
+        ->expectsOutputToContain('wh-bad')
+        ->assertFailed();
+
+    expect(retriedDeliveryIds())->toBe(['d1']);
+});
+
 it('only reports what it would retry in dry-run mode', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
         beelDelivery('d1', 'evt-1', 1, false, 5),
