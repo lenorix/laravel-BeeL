@@ -8,6 +8,7 @@ use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
+use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -22,7 +23,8 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
             ->hasConfigFile()
             ->hasRoutes('beel')
             ->hasCommand(RetryWebhookDeliveriesCommand::class)
-            ->hasCommand(CheckCommand::class);
+            ->hasCommand(CheckCommand::class)
+            ->hasCommand(WebhookSubscribeCommand::class);
     }
 
     public function packageRegistered(): void

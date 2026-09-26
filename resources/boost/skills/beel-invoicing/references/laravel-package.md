@@ -50,6 +50,10 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 - Account resources: `companies`, `members`, `invitations`, `webhooks`, `emails`.
 - Resources that are not tied to a company or account (`catalogs`, `nif`, `accounts`) are used directly from `client()`: `$beel->nif->validate($nif)`, `$beel->catalogs->taxTypes()`.
 
+## Webhook subscription command
+
+`php artisan beel:webhook:subscribe [--url=] [--event=*] [--env-key=BEEL_WEBHOOK_SECRET] [--rotate] [--force]` creates this app's subscription (default URL `APP_URL` + `webhook_path`, HTTPS only; default events all but the provisioner-only `account.claimed`, `company.created`, `representation.signed`) and writes the secret to `.env` atomically, never printing it. Before calling BeeL it validates the URL and that `.env` and its directory are writable, and confirms in production. It refuses a second subscription for the same URL (use `--rotate`, which calls `rotateSecret()`). If saving fails after a create it deletes the new subscription; after a rotate the old secret is already dead, so it prints the new one once. Needs `webhooks:write`. Single-app only: multi-tenant apps call `$account->webhooks->create()` and store each tenant's secret themselves.
+
 ## Diagnosis
 
 `php artisan beel:check` is read-only (GET requests only, no test deliveries) and reports: API key presence and sandbox/live vs `APP_ENV`; `GET /v1/me/identity` (account, environment, and the key's scopes, which that endpoint returns without needing any scope) vs `services.beel.account_id`; the default company's `issuingReadiness()` blockers; missing `webhooks:read`/`webhooks:write`; whether an active HTTPS subscription points at `APP_URL` + `webhook_path` (per-tenant sub-paths count); the webhook secret (default resolver only); and the dedupe store (`array`/`null` error, `file` warning). Errors exit 1, warnings exit 0.

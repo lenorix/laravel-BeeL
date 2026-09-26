@@ -139,7 +139,7 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 ## Webhooks
 
-The simplest setup needs no code: put the subscription's signing secret in `services.beel.webhook_secret` (`BEEL_WEBHOOK_SECRET`), point the BeeL webhook subscription at `https://your-app/beel/webhook`, and listen to `BeelWebhookReceived`. Everything below that (per-tenant secrets, your own endpoint) is optional.
+The simplest setup needs no code: run `php artisan beel:webhook:subscribe` (or create the subscription in BeeL yourself, pointing at `https://your-app/beel/webhook`, and put its signing secret in `BEEL_WEBHOOK_SECRET`, read as `services.beel.webhook_secret`), then listen to `BeelWebhookReceived`. Everything below that (per-tenant secrets, your own endpoint) is optional.
 
 By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected with 401 from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. A well-formed header whose HMAC doesn't match the configured secret — typically a secret rotated moments ago, since BeeL invalidates the old one immediately — gets a retryable 503 instead of 401, so BeeL's redelivery (5 attempts over roughly 75s) covers the deploy window; a malformed JSON body still gets a non-retryable 401. Those 503s (signature mismatch, or no secret configured) also log a warning, at most once per reason per minute so forged requests can't flood the log, and never including the secret, the signature or the body; 401s are not logged. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched **before** answering, so BeeL's 202 means your listeners ran. If a listener throws, the exception is reported and the webhook answers 503: BeeL retries the delivery (and `beel:retry-webhook-deliveries` sees it as failed) instead of the event being lost behind a 202. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` and `accountId` it belongs to (when the event type carries them), the `webhookKey` URL segment it arrived on (null on the bare path), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard).
 
@@ -284,6 +284,16 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 ```
 
 `--account-id` / `--api-key` check just that one account instead, for one-off runs. `--webhook-id` also limits the run to a single account (the given one, or the default), since subscription ids belong to one account. Don't pass `--api-key` through `Schedule::command()`: it would show in `ps` and `schedule:list`; bind `WebhookRetryAccounts` instead.
+
+### Creating the subscription
+
+`php artisan beel:webhook:subscribe` creates this app's BeeL webhook subscription and writes its signing secret to `.env` (`BEEL_WEBHOOK_SECRET`, or `--env-key=`); it never prints the secret. BeeL shows a secret only once, so the command:
+
+- checks the URL (`APP_URL` + the webhook path, or `--url=`; it must be HTTPS) and that `.env` is writable before calling BeeL, and asks for confirmation in production (`--force` skips it);
+- refuses to create a second subscription for the same URL (it would sign with a different secret the app can't verify); `--rotate` replaces the existing subscription's secret instead;
+- writes `.env` atomically, keeping every other line; if it still can't save a newly created subscription's secret, it deletes that subscription so nothing is left half-configured. After `--rotate` the old secret is already invalid, so in that one case it prints the new secret once as the only way to recover.
+
+It subscribes every event except the provisioner-only ones (`--event=` to choose), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps create each tenant's subscription with `$account->webhooks->create()` and store its secret per tenant.
 
 ### One secret per tenant (optional)
 
