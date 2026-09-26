@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Http\Client\Request as ClientRequest;
+use Illuminate\Support\Facades\Http;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\LaravelBeel\BeelCompany;
 use Lenorix\LaravelBeel\BeelManager;
@@ -51,6 +53,21 @@ it('lets an explicit company id override the configured one', function () {
     $company = app(BeelManager::class)->company(companyId: 'explicit-company-id');
 
     expect($company->companyId)->toBe('explicit-company-id');
+});
+
+it('combines an explicit api key with the configured company id', function () {
+    Http::fake(['config.example.test/*' => Http::response(['data' => ['id' => 'config-company-id']], 200)]);
+
+    $company = app(BeelManager::class)->company(apiKey: 'explicit-api-key');
+
+    expect($company->companyId)->toBe('config-company-id');
+
+    $company->get();
+
+    Http::assertSent(function (ClientRequest $request) {
+        return $request->hasHeader('Authorization', 'Bearer explicit-api-key')
+            && str_contains($request->url(), 'config-company-id');
+    });
 });
 
 it('throws when no company id is configured or provided', function () {
