@@ -49,7 +49,7 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
         // These global middleware json_decode and walk the whole body before routing. The webhook
         // only ever reads the raw body after verifying its signature, so skip them for that path.
         $path = trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
-        $isWebhook = fn (Request $request): bool => $request->is($path);
+        $isWebhook = fn (Request $request): bool => $request->is($path, $path.'/*');
 
         TrimStrings::skipWhen($isWebhook);
         ConvertEmptyStringsToNull::skipWhen($isWebhook);

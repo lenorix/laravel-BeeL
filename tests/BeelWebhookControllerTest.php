@@ -177,3 +177,35 @@ it('accepts many legitimate deliveries in a burst', function () {
 
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 350);
 });
+
+it('passes an optional trailing path segment to the secret resolver so each tenant can have its own secret', function () {
+    Event::fake();
+    app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
+    {
+        public function resolve(Request $request): ?string
+        {
+            return ['tenant-a' => 'secret-a', 'tenant-b' => 'secret-b'][$request->route('tenant')] ?? null;
+        }
+    });
+
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'secret-a')])->assertStatus(202);
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'secret-b')])->assertStatus(503);
+    $this->postJson('/beel/webhook/unknown', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'secret-a')])->assertStatus(503);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('builds per-tenant webhook URLs from the route name', function () {
+    expect(route('beel.webhook'))->toEndWith('/beel/webhook')
+        ->and(route('beel.webhook', ['tenant' => 'tenant-a']))->toEndWith('/beel/webhook/tenant-a');
+});
+
+it('also skips the input-trimming middleware on per-tenant webhook URLs', function () {
+    $request = Request::create('/beel/webhook/tenant-a', 'POST', server: ['CONTENT_TYPE' => 'application/json'], content: '{"k":"  x  "}');
+
+    (new TrimStrings)->handle($request, fn ($request) => $request);
+
+    expect($request->json('k'))->toBe('  x  ');
+});

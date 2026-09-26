@@ -54,3 +54,15 @@ it('reports live deliveries as not test when the field is explicitly false', fun
 
     expect($event->isTest())->toBeFalse();
 });
+
+it('exposes the account id from the payload', function () {
+    $event = new BeelWebhookReceived('evt_1', 'account.claimed', [], ['id' => 'evt_1', 'account_id' => 'account-uuid', 'data' => []]);
+
+    expect($event->accountId)->toBe('account-uuid');
+});
+
+it('exposes a null account id when the payload has none', function () {
+    $event = new BeelWebhookReceived('evt_1', 'invoice.issued', [], ['id' => 'evt_1', 'data' => []]);
+
+    expect($event->accountId)->toBeNull();
+});
