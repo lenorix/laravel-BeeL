@@ -74,3 +74,14 @@ it('rejects a valid signature over a payload missing id, type, or data', functio
 it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();
 });
+
+it('throttles requests once the configured limit is exceeded', function () {
+    config()->set('beel.webhook_rate_limit.max_attempts_per_minute', 2);
+
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $signature = signBeelPayload($payload, 'test-webhook-secret');
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(429);
+});

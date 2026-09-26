@@ -3,6 +3,11 @@
 return [
     'register_webhook_route' => true,
     'webhook_path' => 'beel/webhook',
+    'webhook_rate_limit' => [
+        // Generous on purpose: this throttles abuse/flooding, not legitimate BeeL traffic.
+        // Set to null to disable rate limiting entirely.
+        'max_attempts_per_minute' => 300,
+    ],
     'http' => [
         // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries.
         'timeout' => 30,
