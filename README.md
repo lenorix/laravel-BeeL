@@ -137,7 +137,13 @@ Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event):
 });
 ```
 
-BeeL may redeliver the same event (e.g. if a prior delivery timed out), so listeners that aren't naturally idempotent should deduplicate using `$event->id` — for example, skip processing if that id was already recorded, before doing any real work.
+BeeL may redeliver the same event (e.g. if a prior delivery timed out); every delivery of an event carries the same id, also sent as its `Idempotency-Key` header. The package remembers accepted events for `webhook_dedupe_seconds` (15 minutes by default) in the cache: a redelivery within that window gets the same 202 and does not dispatch `BeelWebhookReceived` again, and two simultaneous deliveries of the same event dispatch it only once, because the claim uses the atomic `Cache::add()`. Details:
+
+- Only verified, accepted (202) deliveries are remembered, keyed on the signed payload id and the URL's webhook key. An unverified request can't block a real event, a 503 (e.g. wrong secret) is still retried by BeeL, and one tenant can't swallow another tenant's event id.
+- `webhook_dedupe_store` picks the cache store (default store if `null`). When several servers receive webhooks, use a store they share with atomic adds (Redis, Memcached, database); the file store only protects a single server.
+- Set `webhook_dedupe_seconds` to `null` or `0` to disable it.
+
+Listeners that aren't naturally idempotent should still deduplicate using `$event->id` (for example with a unique index, as below), since the cache window is short and cache entries can be evicted.
 
 For anything beyond trivial processing, implement the listener as a queued class instead of a closure, so it gets real retries (with your own backoff and failure handling) independent of whether BeeL happens to redeliver:
 

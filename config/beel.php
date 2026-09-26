@@ -6,6 +6,13 @@ return [
     // Maximum age (in seconds) allowed for a webhook's signed timestamp, guarding against replay
     // attacks. Matches the SDK's own WebhookVerifier default.
     'webhook_replay_tolerance_seconds' => 300,
+    // BeeL redelivers an event with the same id (its Idempotency-Key). Accepted events are remembered
+    // for this many seconds so a redelivery gets the same 202 without dispatching BeelWebhookReceived
+    // again. null or 0 disables it. Listeners should still deduplicate on $event->id for longer windows.
+    'webhook_dedupe_seconds' => 900,
+    // Cache store for that memory; null uses the default store. Use one shared by all servers
+    // (redis, database, ...) when several servers receive webhooks.
+    'webhook_dedupe_store' => null,
     // Safety net for `php artisan beel:retry-webhook-deliveries`, which asks BeeL to redeliver
     // webhook events that never reached this app (no attempt succeeded). It uses services.beel.key and
     // services.beel.account_id; if you use it, create that API key with the webhooks:read and

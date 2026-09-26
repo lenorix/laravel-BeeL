@@ -241,3 +241,59 @@ it('treats the bare path and any segment the same with the default config resolv
 
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
 });
+
+it('answers a redelivered event the same way without dispatching it again', function () {
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret'), 'Idempotency-Key' => 'evt_1'];
+
+    $first = $this->postJson('/beel/webhook', $payload, $headers);
+    $second = $this->postJson('/beel/webhook', $payload, $headers);
+
+    $first->assertStatus(202);
+    $second->assertStatus(202)->assertExactJson($first->json());
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('keeps deduplication separate per webhook key so one tenant cannot swallow another tenant\'s event', function () {
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')];
+
+    $this->postJson('/beel/webhook/tenant-a', $payload, $headers)->assertStatus(202);
+    $this->postJson('/beel/webhook/tenant-b', $payload, $headers)->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
+});
+
+it('does not remember failed deliveries, so BeeL\'s retry after fixing the secret is processed', function () {
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'old-secret')])->assertStatus(503);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('cannot be poisoned by an unverified request carrying a real event id', function () {
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => 'garbage', 'Idempotency-Key' => 'evt_1'])->assertStatus(401);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret'), 'Idempotency-Key' => 'evt_1'])->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('can disable webhook deduplication', function () {
+    config()->set('beel.webhook_dedupe_seconds', null);
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')];
+
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
+});

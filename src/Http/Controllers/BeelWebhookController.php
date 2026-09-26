@@ -6,6 +6,7 @@ namespace Lenorix\LaravelBeel\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Lenorix\BeelSdk\Exception\WebhookVerificationError;
 use Lenorix\BeelSdk\Webhook\WebhookVerifier;
@@ -54,15 +55,19 @@ final class BeelWebhookController
             return new JsonResponse(['message' => 'Invalid BeeL webhook event.'], 400);
         }
 
-        // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
-        // Listeners that must survive a worker restart or run reliably under load should still
-        // implement ShouldQueue; this only protects response latency, not delivery guarantees.
         $webhookKey = $request->route('beelWebhookKey');
         $webhookKey = is_string($webhookKey) && $webhookKey !== '' ? $webhookKey : null;
 
+        if (! self::isFirstDelivery($id, $webhookKey)) {
+            return self::received();
+        }
+
+        // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
+        // Listeners that must survive a worker restart or run reliably under load should still
+        // implement ShouldQueue; this only protects response latency, not delivery guarantees.
         defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)));
 
-        return new JsonResponse(['received' => true], 202);
+        return self::received();
     }
 
     /**
@@ -86,6 +91,32 @@ final class BeelWebhookController
         }
 
         return $timestamp !== null && $hasDigest && abs(time() - $timestamp) <= $tolerance;
+    }
+
+    /**
+     * BeeL redelivers an event with the same id (also sent as the Idempotency-Key header). Remember
+     * accepted events for a while so a redelivery gets the same 202 without dispatching the Laravel
+     * event twice. Only verified, accepted deliveries are remembered, keyed on the signed payload id
+     * rather than the unsigned header, so an unverified request can't block a real event. The webhook
+     * key is part of the cache key so one tenant can't consume another tenant's event id. Cache::add
+     * is atomic, so concurrent redeliveries dispatch once.
+     */
+    private static function isFirstDelivery(string $eventId, ?string $webhookKey): bool
+    {
+        $seconds = config('beel.webhook_dedupe_seconds', 900);
+        if (! is_numeric($seconds) || (int) $seconds <= 0) {
+            return true;
+        }
+
+        $store = config('beel.webhook_dedupe_store');
+        $key = 'beel:webhook:'.hash('sha256', ($webhookKey ?? '').'|'.$eventId);
+
+        return Cache::store(is_string($store) && $store !== '' ? $store : null)->add($key, true, (int) $seconds);
+    }
+
+    private static function received(): JsonResponse
+    {
+        return new JsonResponse(['received' => true], 202);
     }
 
     private static function invalidSignature(): JsonResponse

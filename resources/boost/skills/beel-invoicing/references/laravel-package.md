@@ -23,6 +23,8 @@ Verified against the package source on 2026-09-26.
 | `register_webhook_route` | `true` | Register `POST {webhook_path}` automatically |
 | `webhook_path` | `beel/webhook` | Webhook URI; route name `beel.webhook` |
 | `webhook_replay_tolerance_seconds` | `300` | Max age of the signed timestamp |
+| `webhook_dedupe_seconds` | `900` | Remember accepted event ids; null/0 disables |
+| `webhook_dedupe_store` | `null` | Cache store for that (default store if null) |
 | `http.timeout` / `http.connect_timeout` | `30` / `10` | Seconds |
 | `http.retries` / `http.retry_delay_ms` | `3` / `100` | Laravel retries on connection errors, 429 and 5xx |
 | `http.options` | `[]` | Extra Guzzle options |
@@ -68,7 +70,8 @@ Flow of `POST /beel/webhook/{beelWebhookKey?}`:
 2. `WebhookSecretResolver::resolve($request)` (default: `services.beel.webhook_secret`). No secret returns `503`, which BeeL retries.
 3. `Lenorix\BeelSdk\Webhook\WebhookVerifier::verify()` checks the HMAC over the exact raw body. A mismatch returns a retryable `503` (a header this well-formed but wrong usually means the secret was just rotated, and BeeL invalidates the old one immediately); any other verification failure (malformed JSON body) returns a non-retryable `401`.
 4. The decoded payload must have string `id`, string `type` and array `data`, else `400`.
-5. Responds `202` and dispatches `BeelWebhookReceived($id, $type, $data, $payload)` via `defer()`, after the response is sent. The event also exposes `companyId`, `accountId`, `webhookKey` (the URL segment, nullable) and `isTest()`.
+5. Deduplication: the first verified, accepted delivery of an event id claims `Cache::add()` (key = webhook key + payload id, `webhook_dedupe_seconds`, 900 by default, on `webhook_dedupe_store`); a redelivery or a simultaneous duplicate gets the same `202` without dispatching again. Failed or unverified requests are never remembered. Multi-server apps need a shared, atomic store (Redis, Memcached, database).
+6. Responds `202` and dispatches `BeelWebhookReceived($id, $type, $data, $payload)` via `defer()`, after the response is sent. The event also exposes `companyId`, `accountId`, `webhookKey` (the URL segment, nullable) and `isTest()`.
 
 Notes:
 
