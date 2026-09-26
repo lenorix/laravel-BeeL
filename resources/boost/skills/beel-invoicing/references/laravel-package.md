@@ -1,0 +1,133 @@
+# lenorix/laravel-beel
+
+Verified against the package source on 2026-09-26.
+
+## Configuration
+
+`config/services.php`:
+
+```php
+'beel' => [
+    'key' => env('BEEL_API_KEY'),             // beel_sk_test_... (sandbox) or beel_sk_live_... (production)
+    'company_id' => env('BEEL_COMPANY_ID'),   // company UUID, not the NIF
+    'account_id' => env('BEEL_ACCOUNT_ID'),   // optional, only for BeelManager::account()
+    'base_url' => env('BEEL_BASE_URL', 'https://app.beel.es/api'),
+    'webhook_secret' => env('BEEL_WEBHOOK_SECRET'),
+],
+```
+
+`config/beel.php` (publish with `php artisan vendor:publish --tag="beel-config"`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `register_webhook_route` | `true` | Register `POST {webhook_path}` automatically |
+| `webhook_path` | `beel/webhook` | Webhook URI; route name `beel.webhook` |
+| `webhook_replay_tolerance_seconds` | `300` | Max age of the signed timestamp |
+| `http.timeout` / `http.connect_timeout` | `30` / `10` | Seconds |
+| `http.retries` / `http.retry_delay_ms` | `3` / `100` | Laravel retries on connection errors, 429 and 5xx |
+| `http.options` | `[]` | Extra Guzzle options |
+
+## BeelManager (singleton) and the `LaravelBeel` facade
+
+- `client(?string $apiKey = null): Lenorix\BeelSdk\Beel` builds a fresh SDK client per call; no state is shared between calls. Throws `InvalidArgumentException` when no key or base URL is available.
+- `company(?string $apiKey = null, ?string $companyId = null): BeelCompany` uses `services.beel.company_id` when `$companyId` is null.
+- `account(?string $apiKey = null, ?string $accountId = null): BeelAccount` uses `services.beel.account_id` when `$accountId` is null.
+- The facade `Lenorix\LaravelBeel\Facades\LaravelBeel` proxies the same three methods.
+
+`BeelCompany` and `BeelAccount` are thin decorators over the SDK's `CompanyScope` and `AccountScope`:
+
+- `$company->companyId` / `$account->accountId`, `->scope` (the SDK scope), `->raw` (the generated Jane client for endpoints without a resource wrapper).
+- Property access (`$company->invoices`) and method calls (`$company->issuingReadiness()`) are forwarded to the scope; unknown properties throw `LogicException`.
+- Company resources: `invoices`, `customers`, `products`, `series`, `recurringInvoices`, `paymentConnections`, `taxConfiguration`, `verifactuConfiguration`.
+- Account resources: `companies`, `members`, `invitations`, `webhooks`, `emails`.
+- Resources that are not tied to a company or account (`catalogs`, `nif`, `accounts`) are used directly from `client()`: `$beel->nif->validate($nif)`, `$beel->catalogs->taxTypes()`.
+
+## Transport, retries and idempotency
+
+- The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx with a fixed `retry_delay_ms`. It does not honour `Retry-After`; handle `BeelRateLimitError::$retryAfterSeconds` yourself for long waits.
+- The SDK adds one `Idempotency-Key` per logical POST before the transport, so Laravel's retries resend the same key. Pass your own key in the `$headers` argument when the operation may be retried across processes or queue attempts.
+- All requests go through Laravel's HTTP client, so HTTP client events, `Http::fake()` and global middleware apply.
+
+## Errors
+
+- `Lenorix\BeelSdk\Exception\BeelApiError` (extends `RuntimeException`): `statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`.
+- Subclasses: `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422, field errors in `details`), `BeelRateLimitError` (429, `retryAfterSeconds`).
+- Transport failures are not `BeelApiError`: `Lenorix\LaravelBeel\LaravelNetworkException` (connection failure, implements PSR-18 `NetworkExceptionInterface`, `getRequest()`) and `Lenorix\LaravelBeel\LaravelClientException` (anything else, PSR-18 `ClientExceptionInterface`).
+
+## Webhook endpoint
+
+Flow of `POST /beel/webhook`:
+
+1. Header pre-filter, before the secret or body is touched: a missing header, no numeric `t`, no `v1` shaped like a lowercase SHA-256 hex digest, or a timestamp outside `webhook_replay_tolerance_seconds` returns `401`.
+2. `WebhookSecretResolver::resolve($request)` (default: `services.beel.webhook_secret`). No secret returns `503`, which BeeL retries.
+3. `Lenorix\BeelSdk\Webhook\WebhookVerifier::verify()` checks the HMAC over the exact raw body; failure returns `401`.
+4. The decoded payload must have string `id`, string `type` and array `data`, else `400`.
+5. Responds `202` and dispatches `BeelWebhookReceived($id, $type, $data, $payload)` via `defer()`, after the response is sent.
+
+Notes:
+
+- No rate limiting on purpose: BeeL does not retry 4xx responses, so throttling would drop legitimate events. Do not add throttle, auth or CSRF middleware to this route.
+- The route skips `TrimStrings` and `ConvertEmptyStringsToNull` so the body is not parsed before verification.
+- `defer()` protects the response time only. A listener that throws inside it is reported and not retried; use `ShouldQueue` listeners for anything that must not be lost.
+- Custom secrets per tenant: bind your own `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` and resolve from trusted metadata (a route parameter, host, or a dedicated path per tenant), never from the unverified body.
+- To own the endpoint entirely, set `register_webhook_route` to `false` and use `WebhookVerifier` directly with the raw body (`$request->getContent()`).
+
+Listener example:
+
+```php
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Lenorix\BeelSdk\Webhook\WebhookEventType;
+use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+
+class HandleBeelWebhook implements ShouldQueue
+{
+    use InteractsWithQueue;
+
+    public int $tries = 5;
+
+    public function backoff(): array
+    {
+        return [10, 30, 60, 300, 900];
+    }
+
+    public function handle(BeelWebhookReceived $event): void
+    {
+        if ($event->payload['test'] ?? false) {
+            return; // dashboard test delivery
+        }
+
+        // Deduplicate: BeeL may deliver the same event more than once.
+        if (ProcessedBeelEvent::where('event_id', $event->id)->exists()) {
+            return;
+        }
+
+        match ($event->type) {
+            WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->payload['company_id'] ?? null, $event->data),
+            WebhookEventType::INVOICE_VOIDED->value => $this->markVoided($event->data),
+            default => null,
+        };
+
+        ProcessedBeelEvent::create(['event_id' => $event->id]);
+    }
+}
+```
+
+`ProcessedBeelEvent`, `syncVerifactu` and `markVoided` are app code; a unique index on `event_id` makes the deduplication race-safe.
+
+## Testing
+
+- `Http::preventStrayRequests()` in the base test case and `Http::fake([...])` per test. Fake BeeL's envelope: `Http::response(['data' => [...]], 200)`.
+- Assert outgoing calls with `Http::assertSent(fn (Illuminate\Http\Client\Request $r) => $r->hasHeader('Authorization', 'Bearer ...') && str_contains($r->url(), $companyId))`.
+- Simulate transport failures with `Http::fake(fn () => throw new GuzzleHttp\Exception\ConnectException('...', new GuzzleHttp\Psr7\Request('GET', 'https://example.test')))`.
+- Signed webhook requests:
+
+```php
+$payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['invoice_id' => 'inv_1']];
+$t = time();
+$signature = 't='.$t.',v1='.hash_hmac('sha256', $t.'.'.json_encode($payload), config('services.beel.webhook_secret'));
+
+$this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+```
+
+`postJson()` encodes with plain `json_encode($payload)`, so the signature matches the body sent.

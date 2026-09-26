@@ -137,6 +137,10 @@ class ProcessBeelWebhook implements ShouldQueue
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 
+## AI guidelines (Laravel Boost)
+
+The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and a `beel-invoicing` skill for AI coding agents. They cover this package, the `lenorix/beel-sdk` API (which, as a transitive dependency, can't ship its own), BeeL's API behaviour, and the VERI*FACTU rules an app still has to respect, plus what is out of scope (B2B e-invoicing, TicketBAI, SII). Run `php artisan boost:install` (or `boost:update --discover` if Boost is already installed) to pick them up.
+
 ## Requirements
 
 - PHP 8.4+
