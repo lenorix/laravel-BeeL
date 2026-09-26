@@ -24,7 +24,7 @@ final class RetryWebhookDeliveriesCommand extends Command
     protected $signature = 'beel:retry-webhook-deliveries
         {--account-id= : BeeL account UUID (defaults to services.beel.account_id)}
         {--api-key= : BeeL API key (defaults to services.beel.key)}
-        {--webhook-id=* : Only check these webhook subscription ids}
+        {--webhook-id=* : Only check these webhook subscription ids (of a single account)}
         {--max-age= : Only retry events first attempted within this many minutes}
         {--max-attempts= : Give up on events that already have this many attempts}
         {--dry-run : Report what would be retried without asking BeeL to retry it}';
@@ -50,7 +50,10 @@ final class RetryWebhookDeliveriesCommand extends Command
 
         $apiKey = $this->stringOption('api-key');
         $accountId = $this->stringOption('account-id');
-        $accounts = $apiKey !== null || $accountId !== null
+        // Subscription ids belong to one account, so --webhook-id also means a single account: the
+        // given one or the CredentialsResolver default, never every account of the provider.
+        $singleAccount = $apiKey !== null || $accountId !== null || $this->webhookIdsOption() !== [];
+        $accounts = $singleAccount
             ? [new AccountCredentials($accountId, $apiKey)]
             : $container->make(WebhookRetryAccounts::class)->accounts();
 
@@ -140,7 +143,7 @@ final class RetryWebhookDeliveriesCommand extends Command
     /** @return list<string> */
     private function subscriptionIds(BeelAccount $account): array
     {
-        $ids = array_values(array_filter((array) $this->option('webhook-id'), 'is_string'));
+        $ids = $this->webhookIdsOption();
         if ($ids !== []) {
             return $ids;
         }
@@ -265,6 +268,12 @@ final class RetryWebhookDeliveriesCommand extends Command
         } while ($result->getPagination()->getHasNext());
 
         return $items;
+    }
+
+    /** @return list<string> */
+    private function webhookIdsOption(): array
+    {
+        return array_values(array_filter((array) $this->option('webhook-id'), fn ($id) => is_string($id) && $id !== ''));
     }
 
     private function stringOption(string $name): ?string

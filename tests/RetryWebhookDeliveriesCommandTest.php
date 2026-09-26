@@ -413,3 +413,14 @@ it('only checks the account given as options, not the provider', function () {
 
     expect(retriedDeliveryIds())->toBe(['d-acc-2']);
 });
+
+it('never applies --webhook-id across the accounts of the provider', function () {
+    // Subscription ids belong to one account, so --webhook-id implies a single account.
+    app()->bind(WebhookRetryAccounts::class, fn () => throw new RuntimeException('The provider must not be used with --webhook-id.'));
+    fakeBeelWebhookApi([], ['wh-2' => [[beelDelivery('d2', 'evt-2', 1, false, 5)]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries', ['--webhook-id' => ['wh-2']])->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d2']);
+    Http::assertSent(fn (ClientRequest $request) => str_contains($request->url(), '/accounts/acc-1/'));
+});

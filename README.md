@@ -221,7 +221,7 @@ class TenantWebhookRetryAccounts implements WebhookRetryAccounts
 $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class);
 ```
 
-`--account-id` / `--api-key` check just that one account instead, for one-off runs. Don't pass `--api-key` through `Schedule::command()`: it would show in `ps` and `schedule:list`; bind `WebhookRetryAccounts` instead.
+`--account-id` / `--api-key` check just that one account instead, for one-off runs. `--webhook-id` also limits the run to a single account (the given one, or the default), since subscription ids belong to one account. Don't pass `--api-key` through `Schedule::command()`: it would show in `ps` and `schedule:list`; bind `WebhookRetryAccounts` instead.
 
 ### One secret per tenant (optional)
 
