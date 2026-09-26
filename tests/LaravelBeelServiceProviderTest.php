@@ -25,7 +25,7 @@ it('resolves the facade to BeelManager', function () {
 it('publishes the beel config file with expected defaults', function () {
     expect(config('beel.register_webhook_route'))->toBeTrue()
         ->and(config('beel.webhook_path'))->toBe('beel/webhook')
-        ->and(config('beel.webhook_rate_limit.max_attempts_per_minute'))->toBe(300)
+        ->and(config('beel.webhook_rate_limit'))->toBeNull()
         ->and(config('beel.webhook_replay_tolerance_seconds'))->toBe(300)
         ->and(config('beel.http.retries'))->toBe(3);
 });

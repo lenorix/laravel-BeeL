@@ -2,9 +2,9 @@
 
 namespace Lenorix\LaravelBeel;
 
-use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
+use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\RateLimiter;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -27,12 +27,16 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
-        RateLimiter::for('beel-webhook', function (Request $request) {
-            $maxAttempts = config('beel.webhook_rate_limit.max_attempts_per_minute', 300);
+        if (! config('beel.register_webhook_route', true)) {
+            return;
+        }
 
-            return Limit::perMinute((int) $maxAttempts)->by($request->ip())->response(
-                fn () => response()->json(['message' => 'Too many BeeL webhook requests.'], 429)
-            );
-        });
+        // These global middleware json_decode and walk the whole body before routing. The webhook
+        // only ever reads the raw body after verifying its signature, so skip them for that path.
+        $path = trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+        $isWebhook = fn (Request $request): bool => $request->is($path);
+
+        TrimStrings::skipWhen($isWebhook);
+        ConvertEmptyStringsToNull::skipWhen($isWebhook);
     }
 }

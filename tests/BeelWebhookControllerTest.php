@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
+use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
@@ -53,20 +55,45 @@ it('rejects a webhook with a missing signature header', function () {
     $response->assertStatus(401);
 });
 
-it('does not resolve the webhook secret when the signature header is missing', function () {
+it('rejects signatures that could never be valid without resolving the secret', function (?string $header) {
     app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
     {
         public function resolve(Request $request): ?string
         {
-            throw new RuntimeException('The secret resolver should not run without a signature header.');
+            throw new RuntimeException('The secret resolver should not run for an implausible signature.');
         }
     });
 
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = $header === null ? [] : ['BeeL-Signature' => $header];
 
-    $response = $this->postJson('/beel/webhook', $payload);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(401);
+})->with([
+    'missing header' => [null],
+    'blank header' => ['   '],
+    'garbage' => ['garbage'],
+    'non-numeric timestamp' => [fn () => 't=abc,v1='.str_repeat('a', 64)],
+    'missing v1' => [fn () => 't='.time()],
+    'v1 not a sha256 hex digest' => [fn () => 't='.time().',v1=not-a-digest'],
+    'uppercase v1 digest' => [fn () => 't='.time().',v1='.str_repeat('A', 64)],
+    'stale timestamp' => [fn () => 't='.(time() - 3600).',v1='.str_repeat('a', 64)],
+    'future timestamp' => [fn () => 't='.(time() + 3600).',v1='.str_repeat('a', 64)],
+]);
 
-    $response->assertStatus(401);
+it('does not rate limit the webhook route', function () {
+    $middleware = Route::getRoutes()->getByName('beel.webhook')->gatherMiddleware();
+
+    expect(collect($middleware)->contains(fn ($m) => str_starts_with($m, 'throttle')))->toBeFalse();
+});
+
+it('skips the input-trimming middleware for the webhook path so the body is not parsed before verification', function () {
+    $request = Request::create('/beel/webhook', 'POST', server: ['CONTENT_TYPE' => 'application/json'], content: '{"k":"  x  ","e":""}');
+
+    (new TrimStrings)->handle($request, fn ($request) => $request);
+    (new ConvertEmptyStringsToNull)->handle($request, fn ($request) => $request);
+
+    expect($request->json('k'))->toBe('  x  ')
+        ->and($request->json('e'))->toBe('');
 });
 
 it('responds 503 when no webhook secret is configured', function () {
@@ -104,13 +131,15 @@ it('rejects a validly signed webhook older than the configured replay tolerance'
     $response->assertStatus(401);
 });
 
-it('throttles requests once the configured limit is exceeded', function () {
-    config()->set('beel.webhook_rate_limit.max_attempts_per_minute', 2);
+it('accepts many legitimate deliveries in a burst', function () {
+    Event::fake();
 
-    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
-    $signature = signBeelPayload($payload, 'test-webhook-secret');
+    foreach (range(1, 350) as $i) {
+        $payload = ['id' => "evt_{$i}", 'type' => 'invoice.issued', 'data' => ['id' => "inv_{$i}"]];
+        $signature = signBeelPayload($payload, 'test-webhook-secret');
 
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(429);
+        $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    }
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 350);
 });

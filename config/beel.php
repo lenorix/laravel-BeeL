@@ -3,11 +3,6 @@
 return [
     'register_webhook_route' => true,
     'webhook_path' => 'beel/webhook',
-    'webhook_rate_limit' => [
-        // Generous on purpose: this throttles abuse/flooding, not legitimate BeeL traffic.
-        // Set to null to disable rate limiting entirely.
-        'max_attempts_per_minute' => 300,
-    ],
     // Maximum age (in seconds) allowed for a webhook's signed timestamp, guarding against replay
     // attacks. Matches the SDK's own WebhookVerifier default.
     'webhook_replay_tolerance_seconds' => 300,

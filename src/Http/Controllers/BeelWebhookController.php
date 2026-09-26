@@ -16,31 +16,31 @@ final class BeelWebhookController
 {
     public function __invoke(Request $request, WebhookSecretResolver $secrets): JsonResponse
     {
-        // Bail before resolving the secret (which a custom WebhookSecretResolver may look up in a
-        // database or cache) so a request with no signature at all is rejected with minimal work.
+        $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
+
+        // Cheap pre-filter on the header alone: reject anything that can never pass verification
+        // before resolving the secret (a custom resolver may hit a database) or hashing the body.
         $signature = $request->header('BeeL-Signature');
-        if (! is_string($signature) || trim($signature) === '') {
-            return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
+        if (! is_string($signature) || ! self::isPlausibleSignature($signature, $tolerance)) {
+            return self::invalidSignature();
         }
 
         $secret = $secrets->resolve($request);
         if ($secret === null) {
-            return response()->json(['message' => 'BeeL webhook secret is not configured.'], 503);
+            return new JsonResponse(['message' => 'BeeL webhook secret is not configured.'], 503);
         }
-
-        $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
 
         try {
             $payload = (new WebhookVerifier($secret, $tolerance))->verify($request->getContent(), $signature);
         } catch (WebhookVerificationError) {
-            return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
+            return self::invalidSignature();
         }
 
         $id = $payload['id'] ?? null;
         $type = $payload['type'] ?? null;
         $data = $payload['data'] ?? null;
         if (! is_string($id) || ! is_string($type) || ! is_array($data)) {
-            return response()->json(['message' => 'Invalid BeeL webhook event.'], 400);
+            return new JsonResponse(['message' => 'Invalid BeeL webhook event.'], 400);
         }
 
         // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
@@ -48,6 +48,34 @@ final class BeelWebhookController
         // implement ShouldQueue; this only protects response latency, not delivery guarantees.
         defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload)));
 
-        return response()->json(['received' => true], 202);
+        return new JsonResponse(['received' => true], 202);
+    }
+
+    /**
+     * Mirrors WebhookVerifier's header parsing and replay window, and additionally requires a v1
+     * shaped like a lowercase SHA-256 hex digest (the only thing hash_hmac can produce), so it
+     * never rejects a signature the SDK would accept. The SDK still performs the real HMAC check.
+     */
+    private static function isPlausibleSignature(string $header, int $tolerance): bool
+    {
+        $timestamp = null;
+        $hasDigest = false;
+
+        foreach (explode(',', $header) as $part) {
+            [$key, $value] = array_pad(explode('=', trim($part), 2), 2, null);
+
+            if ($key === 't' && $value !== null && ctype_digit($value)) {
+                $timestamp = (int) $value;
+            } elseif ($key === 'v1' && $value !== null && strlen($value) === 64 && ctype_xdigit($value) && strtolower($value) === $value) {
+                $hasDigest = true;
+            }
+        }
+
+        return $timestamp !== null && $hasDigest && abs(time() - $timestamp) <= $tolerance;
+    }
+
+    private static function invalidSignature(): JsonResponse
+    {
+        return new JsonResponse(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
     }
 }
