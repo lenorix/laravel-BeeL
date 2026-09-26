@@ -1,6 +1,6 @@
 {
     "name": "lenorix/laravel-beel",
-    "description": "Laravel integration for the BeeL invoicing API PHP SDK",
+    "description": "Laravel integration for the BeeL invoicing API unofficial PHP SDK",
     "keywords": [
         "lenorix",
         "laravel",
