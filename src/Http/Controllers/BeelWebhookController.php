@@ -30,16 +30,17 @@ final class BeelWebhookController
             return response()->json(['message' => 'Invalid BeeL webhook signature or payload.'], 401);
         }
 
+        $id = $payload['id'] ?? null;
         $type = $payload['type'] ?? null;
         $data = $payload['data'] ?? null;
-        if (! is_string($type) || ! is_array($data)) {
+        if (! is_string($id) || ! is_string($type) || ! is_array($data)) {
             return response()->json(['message' => 'Invalid BeeL webhook event.'], 400);
         }
 
         // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
         // Listeners that must survive a worker restart or run reliably under load should still
         // implement ShouldQueue; this only protects response latency, not delivery guarantees.
-        defer(fn () => Event::dispatch(new BeelWebhookReceived($type, $data, $payload)));
+        defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload)));
 
         return response()->json(['received' => true], 202);
     }

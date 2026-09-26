@@ -81,15 +81,17 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 ## Webhooks
 
-By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header, and responds with 202. Invalid signatures return 401. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `type`, its `data`, and the complete `payload`; listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
+By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header, and responds with 202. Invalid signatures return 401. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `id`, its `type`, its `data`, and the complete `payload`; listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
 
 ```php
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event): void {
-    // $event->type, $event->data, $event->payload
+    // $event->id, $event->type, $event->data, $event->payload
 });
 ```
+
+BeeL may redeliver the same event (e.g. if a prior delivery timed out), so listeners that aren't naturally idempotent should deduplicate using `$event->id` — for example, skip processing if that id was already recorded, before doing any real work.
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 

@@ -19,7 +19,7 @@ beforeEach(function () {
 it('dispatches the event and responds 202 for a validly signed webhook', function () {
     Event::fake();
 
-    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
     $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
@@ -27,14 +27,14 @@ it('dispatches the event and responds 202 for a validly signed webhook', functio
     $response->assertStatus(202)->assertJson(['received' => true]);
 
     Event::assertDispatched(BeelWebhookReceived::class, function (BeelWebhookReceived $event) {
-        return $event->type === 'invoice.issued' && $event->data === ['id' => 'inv_123'];
+        return $event->id === 'evt_1' && $event->type === 'invoice.issued' && $event->data === ['id' => 'inv_123'];
     });
 });
 
 it('rejects a webhook with an invalid signature', function () {
     Event::fake();
 
-    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'wrong-secret');
 
     $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
@@ -44,7 +44,7 @@ it('rejects a webhook with an invalid signature', function () {
 });
 
 it('rejects a webhook with a missing signature header', function () {
-    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
 
     $response = $this->postJson('/beel/webhook', $payload);
 
@@ -54,7 +54,7 @@ it('rejects a webhook with a missing signature header', function () {
 it('responds 503 when no webhook secret is configured', function () {
     config()->set('services.beel.webhook_secret', null);
 
-    $payload = ['type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
     $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
@@ -62,7 +62,7 @@ it('responds 503 when no webhook secret is configured', function () {
     $response->assertStatus(503);
 });
 
-it('rejects a valid signature over a payload missing type or data', function () {
+it('rejects a valid signature over a payload missing id, type, or data', function () {
     $payload = ['foo' => 'bar'];
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
