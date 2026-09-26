@@ -2,12 +2,18 @@
 
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Http\Client\Request as ClientRequest;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
+use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
 use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 use Lenorix\LaravelBeel\Testing\BeelFake;
+use Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks;
+
+uses(InteractsWithBeelWebhooks::class);
 
 beforeEach(function () {
     config()->set('services.beel.key', 'beel_sk_test_fake');
@@ -101,4 +107,23 @@ it('keeps its payload, which may hold an API key, encrypted in the queue', funct
     expect($job)->toBeInstanceOf(ShouldBeEncrypted::class)
         ->and($payload)->not->toContain('beel_sk_live_secret')
         ->and($payload)->not->toContain('inv-1');
+});
+
+it('queues the PDF from the invoice.pdf.generated webhook, as the README shows', function () {
+    config()->set('services.beel.webhook_secret', 'test-webhook-secret');
+    Queue::fake();
+    Event::listen(function (BeelWebhookReceived $event): void {
+        if ($event->type === 'invoice.pdf.generated' && ! $event->isTest()) {
+            $invoiceId = $event->typed()->getData()->getInvoiceId();
+
+            StoreInvoicePdf::dispatch($invoiceId, "invoices/{$invoiceId}.pdf", disk: 's3', companyId: $event->companyId);
+        }
+    });
+
+    $this->postBeelWebhook('invoice.pdf.generated', overrides: ['company_id' => 'company-7'])->assertStatus(202);
+
+    Queue::assertPushed(StoreInvoicePdf::class, fn (StoreInvoicePdf $job) => $job->invoiceId === 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+        && $job->path === 'invoices/f47ac10b-58cc-4372-a567-0e02b2c3d479.pdf'
+        && $job->disk === 's3'
+        && $job->companyId === 'company-7');
 });

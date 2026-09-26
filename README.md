@@ -95,6 +95,22 @@ Three rules:
 
 `$event->typed()` returns the SDK's typed model of the event. `$event->data` is the raw array.
 
+For example, to archive every invoice PDF as soon as BeeL generates it:
+
+```php
+use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
+
+Event::listen(function (BeelWebhookReceived $event): void {
+    if ($event->type === 'invoice.pdf.generated' && ! $event->isTest()) {
+        $invoiceId = $event->typed()->getData()->getInvoiceId();
+
+        StoreInvoicePdf::dispatch($invoiceId, "invoices/{$invoiceId}.pdf", disk: 's3', companyId: $event->companyId);
+    }
+});
+```
+
+The job downloads it in the background and waits if the PDF isn't ready yet. Dispatching it twice for the same event is harmless.
+
 ## Testing
 
 Tests never reach BeeL: all traffic goes through Laravel's HTTP client. `BeelFake` builds responses shaped like BeeL's:
