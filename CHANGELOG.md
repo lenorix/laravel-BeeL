@@ -14,14 +14,13 @@ First release. Requires PHP 8.4+, Laravel 11.23+, 12 or 13, and `lenorix/beel-sd
 - Credentials from `config/services.php` (`services.beel.key`, `company_id`, `account_id`) by default. Explicit arguments always win. Bind `Contracts\CredentialsResolver` to take the defaults from anywhere else, such as a settings table or the current tenant; it is resolved on every call.
 - All SDK traffic goes through Laravel's HTTP client, so HTTP events, `Http::fake()` and Guzzle options apply. Configurable timeouts and retries on connection errors, 429 and 5xx, honouring a 429's `Retry-After` (capped at 60 s). The SDK keeps adding `Idempotency-Key` to POST requests.
 - Webhook endpoint `POST /beel/webhook/{beelWebhookKey?}` that verifies the `BeeL-Signature` HMAC against the raw body and answers 202:
-  - It dispatches `Events\BeelWebhookReceived` after the response via `defer()`, with `id`, `type`, `data`, `payload`, `companyId`, `accountId`, `webhookKey` and `isTest()`.
+  - It dispatches `Events\BeelWebhookReceived` before answering (a failing listener answers 503 so BeeL retries), with `id`, `type`, `data`, `payload`, `companyId`, `accountId`, `webhookKey` and `isTest()`.
   - The secret comes from `services.beel.webhook_secret` by default. Bind `Contracts\WebhookSecretResolver` for one secret per tenant, chosen from the optional URL segment.
   - Answers:
     - 401: implausible signature headers, rejected from the header alone before resolving the secret or reading the body.
     - 503 (retryable): a well-formed signature that doesn't match, e.g. just after a secret rotation, or no secret configured.
     - 400: a verified payload without `id`, `type` and `data`.
   - Accepted event ids are remembered in the cache for `webhook_dedupe_seconds` (15 minutes, and at least twice the replay tolerance; configurable store), so a redelivery, a simultaneous duplicate or a replay to another URL gets the same 202 without dispatching the event again. Only verified deliveries are remembered, keyed on the event id and the verifying secret.
-  - Events are dispatched after the response with `defer()`, falling back to a terminating callback in apps whose middleware lacks `InvokeDeferredCallbacks`.
   - The replay tolerance is configurable (`webhook_replay_tolerance_seconds`, 300 s by default). The route skips `TrimStrings` and `ConvertEmptyStringsToNull` and is not rate limited, because BeeL never retries a 4xx.
 - `php artisan beel:retry-webhook-deliveries`, a safety net for webhooks that never arrived:
   - It asks BeeL to redeliver events with no successful attempt that fall within `max_age_minutes`. Events whose latest attempt is under 2 minutes old are left for BeeL's automatic retries, and events stop being retried at `max_attempts`.

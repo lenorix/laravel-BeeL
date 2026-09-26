@@ -71,50 +71,63 @@ Flow of `POST /beel/webhook/{beelWebhookKey?}`:
 3. `Lenorix\BeelSdk\Webhook\WebhookVerifier::verify()` checks the HMAC over the exact raw body. A mismatch returns a retryable `503` (a header this well-formed but wrong usually means the secret was just rotated, and BeeL invalidates the old one immediately); any other verification failure (malformed JSON body) returns a non-retryable `401`.
 4. The decoded payload must have string `id`, string `type` and array `data`, else `400`.
 5. Deduplication: the first verified, accepted delivery of an event id claims `Cache::add()` (key = HMAC of the signed payload id with the verifying secret, never the unsigned header or the URL segment, so a captured delivery replayed to another URL isn't re-dispatched and tenants with their own secrets stay apart; TTL = max(`webhook_dedupe_seconds`, 900 by default, 2 × `webhook_replay_tolerance_seconds`), on `webhook_dedupe_store`); a delivery re-accepted under a just-rotated secret is processed again; an unavailable cache store answers 500 (BeeL retries); a redelivery or a simultaneous duplicate gets the same `202` without dispatching again. Failed or unverified requests are never remembered. Why the store matters: the claim must be one atomic check-and-set (a read followed by a write would let two simultaneous deliveries both dispatch) and visible to every process receiving webhooks. Atomic and shared: `redis` (Lua), `memcached` (native add), `database` (insertOrIgnore), `dynamodb` (conditional write). `file` is atomic but per server. `array` (per process, non-atomic) and `null` (stores nothing) make deduplication silently do nothing: set `webhook_dedupe_store` to a proper store if the default is one of them. `on_one_server` for the retry schedule needs the same kind of store (atomic locks).
-6. Responds `202` and dispatches `BeelWebhookReceived($id, $type, $data, $payload)` via `defer()`, after the response is sent. The event also exposes `companyId`, `accountId`, `webhookKey` (the URL segment, nullable) and `isTest()`.
+6. Dispatches `BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)` synchronously, then responds `202`. If a listener throws, it reports the exception, releases the dedupe claim and responds `503`, so BeeL retries. The event also exposes `companyId`, `accountId`, `webhookKey` (the URL segment, nullable) and `isTest()`.
 
 Notes:
 
 - No rate limiting on purpose: BeeL does not retry 4xx responses, so throttling would drop legitimate events. Do not add throttle, auth or CSRF middleware to this route.
 - The 503-vs-401 split for step 3 is decided by `WebhookVerifier`'s exact exception message, since it carries no error code. If a `lenorix/beel-sdk` update changes that wording, the controller safely falls back to `401`.
 - The route skips `TrimStrings` and `ConvertEmptyStringsToNull` so the body is not parsed before verification.
-- Dispatch uses `defer()` when the app's global middleware has `InvokeDeferredCallbacks`, and otherwise a terminating callback (apps upgraded from Laravel 10 with their own `Http\Kernel` may lack it), so the event is always dispatched exactly once.
-- `defer()` protects the response time only. A listener that throws inside it is reported and not retried; use `ShouldQueue` listeners for anything that must not be lost.
+- Listeners run inside the request, before the 202 (BeeL gives up after 10 seconds): keep them light and dispatch queued jobs for real work. A failure to push the job surfaces as a 503 and BeeL retries.
 - Lost deliveries: `php artisan beel:retry-webhook-deliveries` groups each subscription's delivery log by `webhook_event_id`, skips events with any successful attempt, and calls `retryDelivery()` on the latest attempt of events first attempted within `beel.webhook_delivery_retry.max_age_minutes` (1440) that have fewer than `max_attempts` (8, automatic attempts included) attempts. Events that reach `max_attempts` are abandoned: it logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned` (`accountId`, `subscriptionId`, `eventId`, `eventType`, `attempts`, `lastDeliveryId`, `lastHttpStatus`, `lastError`, `payload`) on every run while inside the window; listeners should dedupe on `eventId` and recover by re-reading the resource (e.g. `$company->invoices->get($id)`). For deactivated subscriptions (`active: false`, `deactivated_by: beel` after 25 consecutive failures over 48 h) it does not retry; it logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`) for the app to notify or react, and exits with failure when it gives up, a retry fails, or a subscription is inactive. It skips events whose latest attempt is under 2 minutes old (BeeL's own retries finish ~75 s after the first attempt). It uses `services.beel.key`/`account_id` (or `--api-key`/`--account-id`); the key must be created with `webhooks:read` (listing) and `webhooks:write` (retrying), since scopes are fixed at key creation. Options `--account-id`, `--api-key`, `--webhook-id=*`, `--max-age`, `--max-attempts`, `--dry-run`; never pass `--api-key` via `Schedule::command()` (it shows in `ps`). By default it checks the single account of the bound `CredentialsResolver`; to check several accounts (e.g. all tenants) bind `Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts` returning `Lenorix\LaravelBeel\AccountCredentials($accountId, $apiKey)` items; a failing account doesn't stop the others. `--account-id`/`--api-key` check only that account; `--webhook-id` also implies a single account (given or default). Listener exceptions are reported without stopping the run. Schedule it with `beel.webhook_delivery_retry.schedule` (cron, null by default) or `Schedule::command(...)`. BeeL keeps only the last 50 delivery logs, so run it frequently enough to see failures. Retries carry `Idempotency-Key: beel-webhook-retry-{deliveryId}` (sent through the generated client, since the SDK's `retryDelivery()` takes no headers), so overlapping runs never redeliver the same attempt twice; a `409 IDEMPOTENCY_KEY_PROCESSING` (another run's retry still in flight) is reported as already being retried, not as a failure.
 - Default: the secret is `services.beel.webhook_secret` (bound `ConfigWebhookSecretResolver`); no code needed. Per-tenant secrets: the route is `POST {webhook_path}/{beelWebhookKey?}`; register each tenant's subscription at `route('beel.webhook', ['beelWebhookKey' => $key])` and bind your own `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` that reads `$request->route('beelWebhookKey')` (return null when it is missing). Never pick the secret from the unverified body (a tenant could sign another tenant's `company_id`). Returning null answers 503. The package never interprets the segment (bare path and any segment behave the same; the resolver decides; the default resolver ignores it). In listeners identify the tenant by `$event->webhookKey`, not by `companyId`/`accountId`, and ignore events whose ids don't belong to it; this is only trustworthy when the resolver returns a distinct secret per key and null for unknown or missing keys. A request-bound `CredentialsResolver` returns null in queued listeners and scheduled commands: pass explicit credentials there and bind `WebhookRetryAccounts`.
 - To own the endpoint entirely, set `register_webhook_route` to `false` and use `WebhookVerifier` directly with the raw body (`$request->getContent()`).
 
-Listener example:
+Listener and job example (the listener only routes; the job does the work):
 
 ```php
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 use Lenorix\BeelSdk\Webhook\WebhookEventType;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
-class HandleBeelWebhook implements ShouldQueue
+class RouteBeelWebhook
 {
-    use InteractsWithQueue;
-
-    public int $tries = 5;
-
-    public function backoff(): array
-    {
-        return [10, 30, 60, 300, 900];
-    }
-
     public function handle(BeelWebhookReceived $event): void
     {
         if ($event->isTest()) {
             return; // dashboard test delivery
         }
 
-        DB::transaction(function () use ($event) {
+        if ($event->type === WebhookEventType::VERIFACTU_STATUS_UPDATED->value) {
+            SyncVerifactuStatus::dispatch($event->id, $event->companyId, $event->data);
+        }
+    }
+}
+
+class SyncVerifactuStatus implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable;
+
+    public int $tries = 5;
+
+    public function __construct(public string $eventId, public ?string $companyId, public array $data) {}
+
+    public function backoff(): array
+    {
+        return [10, 30, 60, 300, 900];
+    }
+
+    public function handle(): void
+    {
+        DB::transaction(function () {
             // Claim the event before doing anything. With a unique index on event_id, a concurrent
-            // worker handling a redelivery waits on the index and then inserts nothing.
+            // job for a redelivery waits on the index and then inserts nothing.
             $claimed = DB::table('processed_beel_events')->insertOrIgnore([
-                'event_id' => $event->id,
+                'event_id' => $this->eventId,
                 'created_at' => now(),
             ]);
 
@@ -122,17 +135,13 @@ class HandleBeelWebhook implements ShouldQueue
                 return; // already processed
             }
 
-            match ($event->type) {
-                WebhookEventType::VERIFACTU_STATUS_UPDATED->value => $this->syncVerifactu($event->companyId, $event->data),
-                WebhookEventType::INVOICE_VOIDED->value => $this->markVoided($event->data),
-                default => null,
-            };
+            // ... update the invoice's VERI*FACTU status from $this->data
         });
     }
 }
 ```
 
-`processed_beel_events` (with a unique index on `event_id`), `syncVerifactu` and `markVoided` are app code. If a side effect throws, the transaction rolls back the claim too, so the queued retry processes the event again. That makes the database changes exactly-once, but external side effects inside the transaction (emails, HTTP calls) can still repeat after a rollback: make them idempotent as well, or dispatch them after commit.
+`processed_beel_events` (with a unique index on `event_id`) is app code. If the work throws, the transaction rolls back the claim too, so the job's retry processes the event again. That makes the database changes exactly-once, but external side effects inside the transaction (emails, HTTP calls) can still repeat after a rollback: make them idempotent as well, or dispatch them after commit.
 
 ## Testing
 

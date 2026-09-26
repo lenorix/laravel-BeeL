@@ -1,9 +1,7 @@
 <?php
 
 use Illuminate\Cache\ArrayStore;
-use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
-use Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
@@ -353,26 +351,18 @@ it('answers 500 when the dedupe cache is unavailable, so BeeL retries the delive
     Event::assertNotDispatched(BeelWebhookReceived::class);
 });
 
-it('still dispatches the event when the app lacks the InvokeDeferredCallbacks middleware', function () {
-    // Apps upgraded from Laravel 10 with their own Http\Kernel don't run defer() callbacks.
-    $kernel = app(Kernel::class);
-    $kernel->setGlobalMiddleware(array_values(array_filter(
-        $kernel->getGlobalMiddleware(),
-        fn ($middleware) => $middleware !== InvokeDeferredCallbacks::class,
-    )));
-    Event::fake();
+it('answers 503 when a listener fails and lets BeeL\'s retry process the event again', function () {
+    $calls = 0;
+    Event::listen(BeelWebhookReceived::class, function () use (&$calls) {
+        if (++$calls === 1) {
+            throw new RuntimeException('queue is down');
+        }
+    });
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')];
 
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(503);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
 
-    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
-});
-
-it('dispatches exactly once through defer() when the middleware is present', function () {
-    Event::fake();
-    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
-
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
-
-    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+    expect($calls)->toBe(2);
 });

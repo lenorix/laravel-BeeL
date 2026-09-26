@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel\Http\Controllers;
 
-use Illuminate\Contracts\Http\Kernel as HttpKernel;
-use Illuminate\Foundation\Http\Kernel as FoundationHttpKernel;
-use Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -18,7 +15,7 @@ use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 final class BeelWebhookController
 {
-    public function __invoke(Request $request, WebhookSecretResolver $secrets, HttpKernel $kernel): JsonResponse
+    public function __invoke(Request $request, WebhookSecretResolver $secrets): JsonResponse
     {
         $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
 
@@ -61,11 +58,23 @@ final class BeelWebhookController
         $webhookKey = $request->route('beelWebhookKey');
         $webhookKey = is_string($webhookKey) && $webhookKey !== '' ? $webhookKey : null;
 
-        if (! self::isFirstDelivery($id, $secret, $tolerance)) {
+        $claim = self::claim($id, $secret, $tolerance);
+        if ($claim === false) {
             return self::received();
         }
 
-        self::afterResponse($kernel, fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)));
+        // Dispatched before answering, so BeeL's 202 means the listeners ran. If one fails, release the
+        // claim and answer 503: BeeL retries (and the retry command sees the failed delivery) instead of
+        // the event being lost after a 202. Listeners should stay light and push heavy work to queued
+        // jobs: they delay the response, and BeeL gives up on a delivery after 10 seconds.
+        try {
+            Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey));
+        } catch (\Throwable $exception) {
+            $claim?->release();
+            report($exception);
+
+            return new JsonResponse(['message' => 'The BeeL webhook could not be processed; BeeL will retry it.'], 503);
+        }
 
         return self::received();
     }
@@ -96,43 +105,27 @@ final class BeelWebhookController
     /**
      * BeeL redelivers an event with the same id (also sent as the Idempotency-Key header). Remember
      * accepted events so a redelivery gets the same 202 without dispatching the Laravel event twice.
-     * Cache::add is atomic, so concurrent duplicates dispatch once. Only verified, accepted deliveries
-     * get here, and the key is derived from the signed payload id and the secret that verified it
-     * (never the unsigned header or the URL segment, which the signature doesn't cover): replaying a
-     * captured delivery to another URL can't dodge it, and each subscription's secret keeps tenants
-     * apart. The claim lasts at least twice the replay tolerance, the span one signature stays valid.
+     * Cache::add is atomic, so concurrent duplicates dispatch once. Only verified deliveries get here,
+     * and the key is derived from the signed payload id and the secret that verified it (never the
+     * unsigned header or the URL segment, which the signature doesn't cover): replaying a captured
+     * delivery to another URL can't dodge it, and each subscription's secret keeps tenants apart. The
+     * claim lasts at least twice the replay tolerance, the span one signature stays valid.
+     *
+     * Returns false when the event was already claimed, null when deduplication is disabled, and
+     * otherwise a claim to release if processing fails.
      */
-    private static function isFirstDelivery(string $eventId, string $secret, int $tolerance): bool
+    private static function claim(string $eventId, string $secret, int $tolerance): WebhookClaim|false|null
     {
         $seconds = config('beel.webhook_dedupe_seconds', 900);
         if (! is_numeric($seconds) || (int) $seconds <= 0) {
-            return true;
+            return null;
         }
 
         $store = config('beel.webhook_dedupe_store');
+        $cache = Cache::store(is_string($store) && $store !== '' ? $store : null);
         $key = 'beel:webhook:'.hash_hmac('sha256', $eventId, $secret);
 
-        return Cache::store(is_string($store) && $store !== '' ? $store : null)
-            ->add($key, true, max((int) $seconds, 2 * $tolerance));
-    }
-
-    /**
-     * Runs the callback after the response is sent. defer() only runs when the app's global middleware
-     * includes InvokeDeferredCallbacks, which apps upgraded from Laravel 10 with their own Http\Kernel
-     * may lack; then fall back to a terminating callback, which the kernel always runs. Exactly one of
-     * the two is used, so the event is never dispatched twice.
-     */
-    private static function afterResponse(HttpKernel $kernel, \Closure $callback): void
-    {
-        if ($kernel instanceof FoundationHttpKernel && $kernel->hasMiddleware(InvokeDeferredCallbacks::class)) {
-            // Listeners that must survive a worker restart or run reliably under load should still
-            // implement ShouldQueue; this only protects response latency, not delivery guarantees.
-            defer($callback);
-
-            return;
-        }
-
-        app()->terminating(fn () => rescue($callback));
+        return $cache->add($key, true, max((int) $seconds, 2 * $tolerance)) ? new WebhookClaim($cache, $key) : false;
     }
 
     private static function received(): JsonResponse

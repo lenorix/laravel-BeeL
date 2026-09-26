@@ -127,7 +127,9 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 The simplest setup needs no code: put the subscription's signing secret in `services.beel.webhook_secret` (`BEEL_WEBHOOK_SECRET`), point the BeeL webhook subscription at `https://your-app/beel/webhook`, and listen to `BeelWebhookReceived`. Everything below that (per-tenant secrets, your own endpoint) is optional.
 
-By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected with 401 from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. A well-formed header whose HMAC doesn't match the configured secret — typically a secret rotated moments ago, since BeeL invalidates the old one immediately — gets a retryable 503 instead of 401, so BeeL's redelivery (5 attempts over roughly 75s) covers the deploy window; a malformed JSON body still gets a non-retryable 401. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. `defer()` only runs when the app's global middleware includes `InvokeDeferredCallbacks` (apps upgraded from Laravel 10 that keep their own `app/Http/Kernel.php` may lack it); in that case the package falls back to a terminating callback, so the event is still dispatched, exactly once. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` and `accountId` it belongs to (when the event type carries them), the `webhookKey` URL segment it arrived on (null on the bare path), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard); listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
+By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected with 401 from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. A well-formed header whose HMAC doesn't match the configured secret — typically a secret rotated moments ago, since BeeL invalidates the old one immediately — gets a retryable 503 instead of 401, so BeeL's redelivery (5 attempts over roughly 75s) covers the deploy window; a malformed JSON body still gets a non-retryable 401. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched **before** answering, so BeeL's 202 means your listeners ran. If a listener throws, the exception is reported and the webhook answers 503: BeeL retries the delivery (and `beel:retry-webhook-deliveries` sees it as failed) instead of the event being lost behind a 202. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` and `accountId` it belongs to (when the event type carries them), the `webhookKey` URL segment it arrived on (null on the bare path), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard).
+
+**Keep listeners light and move heavy work to queued jobs.** Listeners run inside the webhook request, before the 202: slow work delays BeeL's response (BeeL gives up on a delivery after 10 seconds and retries it), and any failure makes BeeL redeliver the whole event. A listener should only filter, route and dispatch a job; the job does the real work with its own retries, backoff and failure handling.
 
 ```php
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
@@ -139,7 +141,7 @@ Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event):
 
 BeeL may redeliver the same event (e.g. if a prior delivery timed out); every delivery of an event carries the same id, also sent as its `Idempotency-Key` header. The package remembers accepted events for `webhook_dedupe_seconds` (15 minutes by default) in the cache: a redelivery within that window gets the same 202 and does not dispatch `BeelWebhookReceived` again, and two simultaneous deliveries of the same event dispatch it only once, because the claim uses the atomic `Cache::add()`. Details:
 
-- Only verified, accepted (202) deliveries are remembered, so an unverified request can't block a real event and a 503 (e.g. wrong secret) is still retried by BeeL.
+- Only verified, accepted (202) deliveries are remembered, so an unverified request can't block a real event and a 503 (e.g. wrong secret, or a listener that failed) is still retried by BeeL: a failed listener releases the claim.
 - The claim is keyed on the signed payload id and the secret that verified it, never on the unsigned `Idempotency-Key` header or the URL segment (the signature doesn't cover the URL): replaying a captured delivery to another URL doesn't dispatch it again, and since each BeeL subscription has its own secret, one tenant can't swallow another tenant's event. Side effect: an event accepted under an old secret and redelivered under a just-rotated one is processed again, which the listener's own deduplication covers.
 - The claim lasts at least twice `webhook_replay_tolerance_seconds` (a signature stays valid for that span, since the check is `|now - t| <= tolerance`), even if `webhook_dedupe_seconds` is lower, so a captured delivery can't be replayed after its claim expires. Disabling deduplication reopens that replay window.
 - If the dedupe cache store is unavailable, the webhook answers 500 without dispatching, and BeeL retries it.
@@ -164,35 +166,56 @@ If your default cache store is `array` or `null` (common in tests or minimal set
 
 Listeners that aren't naturally idempotent should still deduplicate using `$event->id` (for example with a unique index, as below), since the cache window is short and cache entries can be evicted.
 
-For anything beyond trivial processing, implement the listener as a queued class instead of a closure, so it gets real retries (with your own backoff and failure handling) independent of whether BeeL happens to redeliver:
+For example, a listener that hands the work to a job:
 
 ```php
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\BeelSdk\Webhook\WebhookEventType;
 
-class ProcessBeelWebhook implements ShouldQueue
+class RouteBeelWebhook
 {
-    use InteractsWithQueue;
+    public function handle(BeelWebhookReceived $event): void
+    {
+        // Skip test deliveries so they never touch production side effects.
+        if ($event->isTest()) {
+            return;
+        }
+
+        match ($event->type) {
+            WebhookEventType::VERIFACTU_STATUS_UPDATED->value => SyncVerifactuStatus::dispatch($event->id, $event->companyId, $event->data),
+            default => null,
+        };
+    }
+}
+```
+
+```php
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+
+class SyncVerifactuStatus implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable;
 
     public int $tries = 5;
+
+    public function __construct(public string $eventId, public ?string $companyId, public array $data) {}
 
     public function backoff(): array
     {
         return [10, 30, 60, 300, 900];
     }
 
-    public function handle(BeelWebhookReceived $event): void
+    public function handle(): void
     {
-        // Skip (or route to a separate handler) test events so they never touch production side effects.
-        if ($event->isTest()) {
-            return;
-        }
-
-        // ... your idempotent processing for $event->type / $event->data
+        // Idempotent processing: deduplicate durably on $this->eventId (e.g. a unique index).
     }
 }
 ```
+
+If pushing the job fails (for example the queue backend is down), the listener throws, the webhook answers 503 and BeeL retries later, so nothing is lost.
 
 ### Recovering deliveries that never arrived
 
@@ -288,7 +311,7 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 ## Requirements
 
 - PHP 8.4+
-- Laravel 11.23+, 12, or 13 (webhook processing uses `defer()`, added in Laravel 11.23)
+- Laravel 11.23+, 12, or 13
 - `lenorix/beel-sdk` 0.2+
 
 ## License
