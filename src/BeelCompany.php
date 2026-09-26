@@ -32,6 +32,7 @@ use Lenorix\BeelSdk\Resource\CompanyScope;
  * @method mixed delete()
  * @method \Lenorix\BeelSdk\Generated\Model\FiscalSummaryResponse fiscalSummary(array<string, mixed> $query = [])
  * @method \Lenorix\BeelSdk\Generated\Model\IssuingReadinessData issuingReadiness()
+ * @method self withOptions(\Lenorix\BeelSdk\Http\RequestOptions $options) Per-call options; keeps this decorator.
  */
 final class BeelCompany
 {
@@ -39,10 +40,14 @@ final class BeelCompany
 
     public readonly Client $raw;
 
-    public function __construct(Beel $client, public readonly string $companyId)
+    /**
+     * @param  Beel|CompanyScope  $client  A client, or (internally) a scope already built for this company.
+     * @param  Client|null  $raw  The raw client, required with a scope.
+     */
+    public function __construct(Beel|CompanyScope $client, public readonly string $companyId, ?Client $raw = null)
     {
-        $this->scope = $client->company($companyId);
-        $this->raw = $client->raw;
+        $this->scope = $client instanceof Beel ? $client->company($companyId) : $client;
+        $this->raw = $client instanceof Beel ? $client->raw : ($raw ?? throw new \InvalidArgumentException('A raw client is required with a scope.'));
     }
 
     public function __get(string $name): mixed
@@ -58,6 +63,13 @@ final class BeelCompany
 
     public function __call(string $name, array $arguments): mixed
     {
-        return $this->scope->{$name}(...$arguments);
+        $result = $this->scope->{$name}(...$arguments);
+
+        // withOptions() returns a new SDK scope: keep this decorator (id, raw client, resources) around it.
+        if ($result instanceof CompanyScope) {
+            return new self($result, $this->companyId, $this->raw);
+        }
+
+        return $result;
     }
 }

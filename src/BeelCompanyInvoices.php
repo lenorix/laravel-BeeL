@@ -17,6 +17,8 @@ use Lenorix\LaravelBeel\Support\InvoicePdfStorage;
  * SDK's; withOptions() keeps returning this decorator.
  *
  * @mixin CompanyInvoicesResource
+ *
+ * @method self withOptions(\Lenorix\BeelSdk\Http\RequestOptions $options) Per-call options; keeps storePdf().
  */
 final class BeelCompanyInvoices
 {
@@ -25,10 +27,13 @@ final class BeelCompanyInvoices
     /**
      * Store an issued invoice's PDF on a Laravel disk (local, S3, FTP, SFTP, ...) and return the path.
      *
-     * The PDF is streamed from BeeL's pre-signed URL into the disk: memory stays at about
-     * `beel.pdf.buffer_bytes` (plus the disk adapter's own buffer, e.g. the part S3 uploads at a
-     * time) whatever the PDF's size. Streaming needs `allow_url_fopen`; without it Guzzle falls
-     * back to cURL, which buffers the body in `php://temp` (bounded memory, spills to disk).
+     * The PDF is streamed from BeeL's pre-signed URL into the disk in `beel.pdf.buffer_bytes` steps
+     * (64 KiB), never loaded whole: on local, FTP and SFTP disks memory stays at about that, whatever
+     * the PDF's size. Other adapters add their own bounded buffer: the S3 one keeps an upload of
+     * unknown size in `php://temp` (up to 2 MB in memory, then disk), so a small PDF sits there whole.
+     * Streaming needs `allow_url_fopen`; without it Guzzle falls back to cURL, which buffers the body
+     * in `php://temp` (bounded memory, spills to disk). Proxy and TLS settings from
+     * `beel.http.options` apply to the download too.
      *
      * It writes a temporary file next to the target and moves it into place only once the download
      * is complete: it must start with the PDF signature and match the declared length and the stored
@@ -37,7 +42,9 @@ final class BeelCompanyInvoices
      * with a new URL, up to `beel.pdf.attempts`.
      *
      * The existence check (without `overwrite`) runs before calling BeeL and again before the move;
-     * a concurrent writer between that last check and the move isn't prevented.
+     * a concurrent writer between that last check and the move isn't prevented. A process killed
+     * mid-download (e.g. a queue worker hitting its timeout) skips the cleanup and can leave a
+     * `.beel-{random}-{name}` file next to the target, safe to delete.
      *
      * @param  string|null  $disk  Disk name; null uses the default disk.
      * @param  array<string, mixed>  $options  Passed to the disk (e.g. `visibility`); `ContentType`

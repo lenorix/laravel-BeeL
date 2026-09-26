@@ -28,6 +28,7 @@ use Lenorix\BeelSdk\Resource\AccountScope;
  * @method \Lenorix\BeelSdk\Generated\Model\ClaimTokenResult createClaimToken(?\Lenorix\BeelSdk\Generated\Model\CreateClaimTokenRequest $request = null)
  * @method mixed setOwner(\Lenorix\BeelSdk\Generated\Model\SetAccountOwnerRequest $request)
  * @method mixed endManagement()
+ * @method self withOptions(\Lenorix\BeelSdk\Http\RequestOptions $options) Per-call options; keeps this decorator.
  */
 final class BeelAccount
 {
@@ -35,10 +36,14 @@ final class BeelAccount
 
     public readonly Client $raw;
 
-    public function __construct(Beel $client, public readonly string $accountId)
+    /**
+     * @param  Beel|AccountScope  $client  A client, or (internally) a scope already built for this account.
+     * @param  Client|null  $raw  The raw client, required with a scope.
+     */
+    public function __construct(Beel|AccountScope $client, public readonly string $accountId, ?Client $raw = null)
     {
-        $this->scope = $client->account($accountId);
-        $this->raw = $client->raw;
+        $this->scope = $client instanceof Beel ? $client->account($accountId) : $client;
+        $this->raw = $client instanceof Beel ? $client->raw : ($raw ?? throw new \InvalidArgumentException('A raw client is required with a scope.'));
     }
 
     public function __get(string $name): mixed
@@ -52,6 +57,13 @@ final class BeelAccount
 
     public function __call(string $name, array $arguments): mixed
     {
-        return $this->scope->{$name}(...$arguments);
+        $result = $this->scope->{$name}(...$arguments);
+
+        // withOptions() returns a new SDK scope: keep this decorator (id, raw client, resources) around it.
+        if ($result instanceof AccountScope) {
+            return new self($result, $this->accountId, $this->raw);
+        }
+
+        return $result;
     }
 }

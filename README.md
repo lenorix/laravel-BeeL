@@ -117,7 +117,7 @@ The package retries faked 429 and 5xx responses; use `Sleep::fake()` to skip the
 
 Each of these is documented in its PHPDoc and in `config/beel.php`:
 
-- **Storing invoice PDFs.** `$company->invoices->storePdf($id, 'invoices/A-42.pdf', disk: 's3')` streams the PDF into any Laravel disk. It uses constant memory and writes atomically, and it verifies the file before moving it into place. It refuses to replace an existing file unless you pass `overwrite: true`.
+- **Storing invoice PDFs.** `$company->invoices->storePdf($id, 'invoices/A-42.pdf', disk: 's3')` streams the PDF into any Laravel disk. It uses bounded memory (a 64 KiB buffer, never the whole file) and writes atomically, and it verifies the file before moving it into place. It refuses to replace an existing file unless you pass `overwrite: true`.
 - **Multi-tenant webhooks.** `BeelWebhookSubscriptions` creates, rotates and deletes one subscription per tenant. It hands each secret to your storage. `Contracts\WebhookSecretResolver` then picks the secret from the URL, `/beel/webhook/{key}`.
 - **Recovering lost deliveries.** `php artisan beel:retry-webhook-deliveries` asks BeeL to redeliver the events that never arrived. You can schedule it with `beel.webhook_delivery_retry.schedule`. It needs the `webhooks:read` and `webhooks:write` scopes.
 - **Integrators** (keys with `accounts:*` scopes):

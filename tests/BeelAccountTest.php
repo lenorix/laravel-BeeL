@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Http;
 use Lenorix\BeelSdk\Beel;
+use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\BeelSdk\Resource\AccountScope;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelHttpClientFactory;
@@ -46,4 +47,13 @@ it('delegates method calls to the scope', function () {
     $account->get();
 
     Http::assertSentCount(1);
+});
+
+it('keeps the account decorator through withOptions()', function () {
+    $account = $this->account->withOptions(new RequestOptions(headers: ['X-Trace' => 't']));
+
+    expect($account)->toBeInstanceOf(BeelAccount::class)
+        ->and($account->accountId)->toBe($this->account->accountId)
+        ->and($account->raw)->toBe($this->account->raw)
+        ->and($account->scope)->not->toBe($this->account->scope);
 });

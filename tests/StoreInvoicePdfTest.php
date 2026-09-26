@@ -3,6 +3,7 @@
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Response as PsrResponse;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request as ClientRequest;
@@ -10,6 +11,10 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
+use League\Flysystem\Config;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+use League\Flysystem\UnableToMoveFile;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\LaravelBeel\BeelManager;
@@ -256,4 +261,51 @@ it('reads in the configured buffer size', function () {
     app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices');
 
     expect(max($reads))->toBe(256 * 1024);
+});
+
+it('works from a company with options', function () {
+    fakePdfDownloads(BeelFake::pdf());
+
+    $company = app(BeelManager::class)->company()->withOptions(new RequestOptions(headers: ['X-Trace' => 't-2']));
+    $company->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices');
+
+    expect($company->companyId)->toBe('company-1')->and(storedFiles())->toBe(['a.pdf']);
+    Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), '/pdf') && $r->hasHeader('X-Trace', 't-2'));
+});
+
+it('overwrites on disks that refuse to rename onto an existing file, like SFTP', function () {
+    Storage::extend('strict-rename', fn ($app, array $config) => new FilesystemAdapter(
+        $driver = new Filesystem($adapter = new class($config['root']) extends LocalFilesystemAdapter
+        {
+            public function move(string $source, string $destination, Config $config): void
+            {
+                if ($this->fileExists($destination)) {
+                    throw UnableToMoveFile::fromLocationTo($source, $destination);
+                }
+                parent::move($source, $destination, $config);
+            }
+        }),
+        $adapter,
+        $config,
+    ));
+    config()->set('filesystems.disks.sftp-like', ['driver' => 'strict-rename', 'root' => storage_path('framework/testing/disks/sftp-like')]);
+    Storage::disk('sftp-like')->put('a.pdf', 'previous');
+    fakePdfDownloads(BeelFake::pdf('%PDF-new'));
+
+    app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'sftp-like', overwrite: true);
+
+    expect(Storage::disk('sftp-like')->get('a.pdf'))->toBe('%PDF-new')
+        ->and(Storage::disk('sftp-like')->allFiles())->toBe(['a.pdf'])
+        ->and(pdfUrlRequests())->toBe(1);
+    Storage::disk('sftp-like')->deleteDirectory('');
+});
+
+it('never applies BeeL-only settings from beel.http.options to the download', function () {
+    config()->set('beel.http.options', ['proxy' => 'http://proxy.test:3128', 'headers' => ['X-Beel-Only' => '1']]);
+    fakePdfDownloads(BeelFake::pdf());
+
+    app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices');
+
+    Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), '/invoices/inv-1/pdf') && $r->hasHeader('X-Beel-Only'));
+    Http::assertSent(fn (ClientRequest $r) => $r->url() === PDF_URL && ! $r->hasHeader('X-Beel-Only'));
 });

@@ -13,6 +13,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use League\Flysystem\FilesystemOperator;
+use League\Flysystem\UnableToMoveFile;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
@@ -71,7 +72,7 @@ final class InvoicePdfStorage
         // A plain request: the pre-signed URL carries its own authorization, so BeeL's API key must
         // never reach it, and a half-read stream can't be retried by middleware anyway.
         try {
-            $response = $this->http->withOptions([
+            $response = $this->http->withOptions($this->transportOptions() + [
                 'stream' => true,
                 'read_timeout' => (float) $this->config->get('beel.pdf.read_timeout', 30),
                 'connect_timeout' => (float) $this->config->get('beel.http.connect_timeout', 10),
@@ -116,7 +117,7 @@ final class InvoicePdfStorage
                 throw new InvoicePdfAlreadyExists($invoiceId, $path);
             }
 
-            $filesystem->move($temporary, $path);
+            $this->moveIntoPlace($filesystem, $temporary, $path, $overwrite);
         } catch (\Throwable $exception) {
             try {
                 $filesystem->delete($temporary);
@@ -134,6 +135,38 @@ final class InvoicePdfStorage
                 fclose($resource);
             }
         }
+    }
+
+    /**
+     * A rename replaces the target atomically on local disks and most FTP servers. SFTP (and some FTP
+     * servers) refuse to rename onto an existing file: only then, and only when overwriting, delete
+     * the old file and rename again, rather than failing after a complete download.
+     */
+    private function moveIntoPlace(FilesystemOperator $filesystem, string $temporary, string $path, bool $overwrite): void
+    {
+        try {
+            $filesystem->move($temporary, $path);
+        } catch (UnableToMoveFile $exception) {
+            if (! $overwrite || ! $filesystem->fileExists($path)) {
+                throw $exception;
+            }
+
+            $filesystem->delete($path);
+            $filesystem->move($temporary, $path);
+        }
+    }
+
+    /**
+     * Transport settings from beel.http.options that the download needs to reach the storage host
+     * too (proxy, TLS). Never headers, auth or base_uri: those belong to BeeL's API.
+     *
+     * @return array<string, mixed>
+     */
+    private function transportOptions(): array
+    {
+        $options = (array) $this->config->get('beel.http.options', []);
+
+        return array_intersect_key($options, array_flip(['proxy', 'verify', 'cert', 'ssl_key', 'crypto_method', 'force_ip_resolve', 'version']));
     }
 
     private function driver(?string $disk): FilesystemOperator
