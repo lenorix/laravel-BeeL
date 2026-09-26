@@ -10,6 +10,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
 use Lenorix\BeelSdk\Generated\Model\WebhookDeliveryLog;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
@@ -133,32 +134,47 @@ final class RetryWebhookDeliveriesCommand extends Command
         }
 
         try {
-            $this->retry($account, $webhookId, $latest->getId());
-            $this->info("Asked BeeL to retry {$label}.");
+            $this->retry($account, $webhookId, $latest->getId())
+                ? $this->info("Asked BeeL to retry {$label}.")
+                : $this->info("{$label} is already being retried by another run.");
         } catch (\Throwable $exception) {
-            $this->error("Could not retry {$label}: {$exception->getMessage()}");
+            $code = $exception instanceof BeelApiError && $exception->apiCode !== null ? " [{$exception->apiCode}]" : '';
+            $this->error("Could not retry {$label}{$code}: {$exception->getMessage()}");
             $this->healthy = false;
         }
     }
 
     /**
      * Calls the generated client directly because the SDK's retryDelivery() wrapper takes no headers.
-     * The key is per delivery attempt: overlapping runs (another server, a manual run) asking to retry
-     * the same attempt get BeeL's stored result instead of a second redelivery, while a later retry
-     * targets the new latest attempt and so gets a new key.
+     * The key is per delivery attempt (a UUID, so always a valid key): overlapping runs asking to retry
+     * the same attempt don't make BeeL redeliver twice, while a later retry targets the new latest
+     * attempt and so gets a new key. Returns false when another run's request with the same key is
+     * still in flight (BeeL answers 409 IDEMPOTENCY_KEY_PROCESSING): that retry is already happening.
      */
-    private function retry(BeelAccount $account, string $webhookId, string $deliveryId): void
+    private function retry(BeelAccount $account, string $webhookId, string $deliveryId): bool
     {
-        $response = $account->raw->retryAccountWebhookDelivery(
-            $account->accountId,
-            $webhookId,
-            $deliveryId,
-            ['Idempotency-Key' => "beel-webhook-retry-{$deliveryId}"],
-        );
+        try {
+            $response = $account->raw->retryAccountWebhookDelivery(
+                $account->accountId,
+                $webhookId,
+                $deliveryId,
+                ['Idempotency-Key' => "beel-webhook-retry-{$deliveryId}"],
+            );
+        } catch (\Throwable $exception) {
+            throw BeelApiError::fromGenerated($exception);
+        }
 
         if ($response instanceof ErrorResponse) {
-            throw new \RuntimeException('BeeL rejected the retry request.');
+            $error = BeelApiError::fromErrorResponse($response);
+
+            if ($error->apiCode === 'IDEMPOTENCY_KEY_PROCESSING') {
+                return false;
+            }
+
+            throw $error;
         }
+
+        return true;
     }
 
     /** @return list<string> */

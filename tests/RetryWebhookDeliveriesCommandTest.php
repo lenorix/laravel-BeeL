@@ -52,16 +52,16 @@ function beelPage(string $key, array $items, bool $hasNext = false, int $page = 
  * @param  array<int, array>  $subscriptions
  * @param  array<string, array<int, array>>  $deliveryPages  pages of deliveries per subscription id
  */
-function fakeBeelWebhookApi(array $subscriptions, array $deliveryPages, int $retryStatus = 200): void
+function fakeBeelWebhookApi(array $subscriptions, array $deliveryPages, int $retryStatus = 200, string $retryErrorCode = 'INTERNAL_ERROR'): void
 {
-    Http::fake(function (ClientRequest $request) use ($subscriptions, $deliveryPages, $retryStatus) {
+    Http::fake(function (ClientRequest $request) use ($subscriptions, $deliveryPages, $retryStatus, $retryErrorCode) {
         $path = parse_url($request->url(), PHP_URL_PATH);
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
 
         if ($request->method() === 'POST' && preg_match('#/deliveries/([^/]+)/retry$#', $path, $m)) {
             return $retryStatus === 200
                 ? Http::response(['success' => true, 'data' => ['id' => 'retry-of-'.$m[1]]], 200)
-                : Http::response(['success' => false, 'error' => ['code' => 'INTERNAL_ERROR', 'message' => 'boom']], $retryStatus);
+                : Http::response(['success' => false, 'error' => ['code' => $retryErrorCode, 'message' => 'boom']], $retryStatus);
         }
 
         if (preg_match('#/webhooks/([^/]+)/deliveries$#', $path, $m)) {
@@ -451,4 +451,21 @@ it('does not restrict the automatic schedule to one server by default', function
         ->first(fn ($event) => str_contains((string) $event->command, 'beel:retry-webhook-deliveries'));
 
     expect($event->onOneServer)->toBeFalse();
+});
+
+it('treats a retry already in flight in another run as handled, not as a failure', function () {
+    // BeeL answers 409 IDEMPOTENCY_KEY_PROCESSING while the first request with the same key is still running.
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]], retryStatus: 409, retryErrorCode: 'IDEMPOTENCY_KEY_PROCESSING');
+
+    $this->artisan('beel:retry-webhook-deliveries')
+        ->expectsOutputToContain('already being retried')
+        ->assertSuccessful();
+});
+
+it('reports the BeeL error code when a retry is rejected', function () {
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]], retryStatus: 403, retryErrorCode: 'INSUFFICIENT_SCOPE');
+
+    $this->artisan('beel:retry-webhook-deliveries')
+        ->expectsOutputToContain('INSUFFICIENT_SCOPE')
+        ->assertFailed();
 });

@@ -24,7 +24,7 @@ First release. Requires PHP 8.4+, Laravel 11.23+, 12 or 13, and `lenorix/beel-sd
 - `php artisan beel:retry-webhook-deliveries`, a safety net for webhooks that never arrived:
   - It asks BeeL to redeliver events with no successful attempt that fall within `max_age_minutes`. Events whose latest attempt is under 2 minutes old are left for BeeL's automatic retries, and events stop being retried at `max_attempts`.
   - It logs and dispatches `Events\BeelWebhookDeliveryAbandoned` when it gives up on an event, and `Events\BeelWebhookSubscriptionInactive` for subscriptions BeeL has deactivated. It exits with failure so monitoring notices.
-  - Retries carry a per-attempt `Idempotency-Key`, so overlapping runs never redeliver twice.
+  - Retries carry a per-attempt `Idempotency-Key`, so overlapping runs never redeliver twice (a retry still in flight in another run is not a failure).
   - Checks one account by default. Bind `Contracts\WebhookRetryAccounts` to check several, each with its own key.
   - Optional automatic scheduling (`webhook_delivery_retry.schedule`, plus `on_one_server`).
   - The API key needs the `webhooks:read` and `webhooks:write` scopes.

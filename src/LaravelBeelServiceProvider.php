@@ -38,7 +38,7 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
             $cron = config('beel.webhook_delivery_retry.schedule');
 
             if (is_string($cron) && $cron !== '') {
-                $event = $schedule->command(RetryWebhookDeliveriesCommand::class)->cron($cron)->withoutOverlapping();
+                $event = $schedule->command(RetryWebhookDeliveriesCommand::class)->cron($cron)->withoutOverlapping(60); // a hard-killed run releases the lock after an hour, not the default day
 
                 if (config('beel.webhook_delivery_retry.on_one_server', false)) {
                     $event->onOneServer();
