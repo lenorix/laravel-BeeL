@@ -14,6 +14,7 @@ use Lenorix\BeelSdk\Beel;
 use Lenorix\BeelSdk\Generated\Model\MyIdentity;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\BeelWebhookSubscriptions;
 use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -165,6 +166,17 @@ final class CheckCommand extends Command
         foreach ($byUrl as $url => $ids) {
             if (count($ids) > 1) {
                 $this->fail_('Subscriptions '.implode(', ', $ids)." all deliver to {$url}; each signs with its own secret, so the app can verify only one of them. Delete the extra ones.");
+            }
+        }
+
+        if (array_intersect(['accounts:read', 'accounts:write'], $scopes) !== []) {
+            $this->note('The API key has the integrator scopes (accounts:*): it manages provisioned accounts.');
+
+            foreach ($matching as $subscription) {
+                $missingEvents = array_values(array_diff(BeelWebhookSubscriptions::PROVISIONER_EVENTS, $subscription->getEvents()));
+                if ($missingEvents !== []) {
+                    $this->warn_("Webhook subscription {$subscription->getId()} does not receive the integrator events ".implode(', ', $missingEvents).'; subscribe with --provisioner-events if the app needs them.');
+                }
             }
         }
 

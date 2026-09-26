@@ -88,6 +88,15 @@ it('subscribes the given events and a per-tenant URL', function () {
         && $r['events'] === ['invoice.issued', 'invoice.voided']);
 });
 
+it('adds the integrator events with --provisioner-events', function () {
+    fakeBeelSubscriptionApi();
+
+    $this->artisan('beel:webhook:subscribe', ['--event' => ['invoice.issued'], '--provisioner-events' => true])->assertSuccessful();
+
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST'
+        && $r['events'] === ['invoice.issued', 'account.claimed', 'company.created', 'representation.signed']);
+});
+
 it('refuses to create a second subscription for the same URL', function () {
     fakeBeelSubscriptionApi([existingSubscription()]);
 

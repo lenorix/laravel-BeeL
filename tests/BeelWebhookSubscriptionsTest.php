@@ -169,3 +169,11 @@ it('refuses a non-HTTPS URL before calling BeeL', function () {
 
     Http::assertNothingSent();
 });
+
+it('offers every event for integrators and leaves the integrator-only ones out by default', function () {
+    $subscriptions = app(BeelWebhookSubscriptions::class);
+
+    expect($subscriptions->allEvents())->toContain('invoice.issued', ...BeelWebhookSubscriptions::PROVISIONER_EVENTS)
+        ->and(array_intersect($subscriptions->defaultEvents(), BeelWebhookSubscriptions::PROVISIONER_EVENTS))->toBe([])
+        ->and(count($subscriptions->defaultEvents()) + 3)->toBe(count($subscriptions->allEvents()));
+});

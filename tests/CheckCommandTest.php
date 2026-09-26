@@ -91,6 +91,30 @@ it('warns about the webhook scopes the retry command needs', function () {
     $this->artisan('beel:check')->expectsOutputToContain('webhooks:write')->assertSuccessful();
 });
 
+it('warns an integrator key whose subscription misses the integrator events', function () {
+    fakeBeelCheckApi(['scopes' => ['accounts:read', 'accounts:write', 'webhooks:read', 'webhooks:write']]);
+
+    $this->artisan('beel:check')
+        ->expectsOutputToContain('integrator scopes')
+        ->expectsOutputToContain('account.claimed, company.created, representation.signed')
+        ->assertSuccessful();
+});
+
+it('does not warn an integrator key subscribed to the integrator events', function () {
+    fakeBeelCheckApi([
+        'scopes' => ['accounts:read', 'webhooks:read', 'webhooks:write'],
+        'subscriptions' => [['id' => 'wh-1', 'url' => 'https://app.test/beel/webhook', 'events' => ['invoice.issued', 'account.claimed', 'company.created', 'representation.signed'], 'active' => true, 'created_at' => now()->format(DATE_ATOM)]],
+    ]);
+
+    $this->artisan('beel:check')->doesntExpectOutputToContain('integrator events')->assertSuccessful();
+});
+
+it('says nothing about integrator events to a regular key', function () {
+    fakeBeelCheckApi();
+
+    $this->artisan('beel:check')->doesntExpectOutputToContain('integrator')->assertSuccessful();
+});
+
 it('fails when webhook deduplication uses a store that silently does nothing', function () {
     config()->set('beel.webhook_dedupe_store', 'array');
     fakeBeelCheckApi();

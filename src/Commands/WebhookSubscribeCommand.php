@@ -28,6 +28,7 @@ final class WebhookSubscribeCommand extends Command
     protected $signature = 'beel:webhook:subscribe
         {--url= : Webhook URL (defaults to APP_URL + beel.webhook_path)}
         {--event=* : Event types to subscribe to (defaults to every non-provisioner event)}
+        {--provisioner-events : Also subscribe to the integrator-only events (account.claimed, company.created, representation.signed)}
         {--env-key=BEEL_WEBHOOK_SECRET : .env key that receives the signing secret}
         {--rotate : Rotate the secret of the existing subscription for this URL instead of creating one}
         {--force : Run in production without asking}';
@@ -175,7 +176,11 @@ final class WebhookSubscribeCommand extends Command
     {
         $given = array_values(array_filter((array) $this->option('event'), fn ($event) => is_string($event) && $event !== ''));
 
-        return $given !== [] ? $given : $subscriptions->defaultEvents();
+        $events = $given !== [] ? $given : $subscriptions->defaultEvents();
+
+        return $this->option('provisioner-events')
+            ? array_values(array_unique([...$events, ...BeelWebhookSubscriptions::PROVISIONER_EVENTS]))
+            : $events;
     }
 
     private function stringOption(string $name): ?string

@@ -39,10 +39,19 @@ final class BeelWebhookSubscriptions
     /** @return list<string> Every event type except the provisioner-only ones. */
     public function defaultEvents(): array
     {
-        return array_values(array_diff(
-            array_map(fn (WebhookEventType $type) => $type->value, WebhookEventType::cases()),
-            self::PROVISIONER_EVENTS,
-        ));
+        return array_values(array_diff($this->allEvents(), self::PROVISIONER_EVENTS));
+    }
+
+    /**
+     * Every event type, including the provisioner-only ones: for integrators, whose key has the
+     * privileged `accounts:*` scopes, to also hear when a provisioned account is claimed, a company
+     * created or an AEAT representation signed.
+     *
+     * @return list<string>
+     */
+    public function allEvents(): array
+    {
+        return array_map(fn (WebhookEventType $type) => $type->value, WebhookEventType::cases());
     }
 
     /**
