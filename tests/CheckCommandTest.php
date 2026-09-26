@@ -201,3 +201,16 @@ it('fails when the tenant key belongs to another account than --account-id', fun
         ->expectsOutputToContain('acc-other')
         ->assertFailed();
 });
+
+it('never mixes a tenant key with the default company and account', function () {
+    config()->set('services.beel.company_id', 'company-default');
+    config()->set('services.beel.account_id', 'acc-default');
+    fakeBeelCheckApi();
+
+    $this->artisan('beel:check', ['--api-key' => 'beel_sk_test_tenant'])
+        ->doesntExpectOutputToContain('acc-default')
+        ->expectsOutputToContain('--company-id')
+        ->assertSuccessful();
+
+    Http::assertNotSent(fn (ClientRequest $r) => str_contains($r->url(), 'company-default'));
+});

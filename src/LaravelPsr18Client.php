@@ -34,8 +34,9 @@ final class LaravelPsr18Client implements ClientInterface
             throw new LaravelClientException($exception->getMessage(), $exception);
         }
 
-        // Guzzle's own PSR-7 response: its body stays in php://temp (spilling to disk past 2 MB)
-        // instead of being copied into a PHP string, so a large export doesn't take its size in memory.
+        // Guzzle's own PSR-7 response, body in php://temp: one copy fewer than rebuilding it from a
+        // string, and the stream a binary endpoint needs. (The SDK's generated deserializers still
+        // read JSON bodies into a string, which is fine for JSON.)
         return $response->toPsrResponse();
     }
 }

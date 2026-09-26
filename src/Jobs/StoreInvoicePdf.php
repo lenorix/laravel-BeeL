@@ -25,7 +25,9 @@ use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
  * - A failed download is retried with backoff (up to 5 exceptions, within a day); an error that
  *   retrying can't fix (a draft has no PDF, an unknown invoice) fails the job at once.
  * - It stays under BeeL's rate limit (ThrottleBeelRequests), waiting in the queue instead of
- *   provoking 429s when thousands are dispatched at once.
+ *   provoking 429s when thousands are dispatched at once. It counts one BeeL request (the PDF
+ *   link); the download itself goes to storage, not to BeeL's API, and a retried attempt asks
+ *   for one more link, which the budget's headroom absorbs.
  *
  * Credentials come from the CredentialsResolver when the job runs. A resolver bound to the request
  * or tenant returns null in a queue worker, so pass `companyId` and `apiKey` then. The payload is

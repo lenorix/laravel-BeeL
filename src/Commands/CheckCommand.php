@@ -26,7 +26,7 @@ use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 final class CheckCommand extends Command
 {
     protected $signature = 'beel:check
-        {--api-key= : Check this API key instead of the default credentials (e.g. one tenant\'s)}
+        {--api-key= : Check this API key instead of the default credentials (e.g. one tenant\'s; it shows in ps and shell history)}
         {--company-id= : Company to check the issuing readiness of}
         {--account-id= : Account the key is expected to belong to}';
 
@@ -37,9 +37,11 @@ final class CheckCommand extends Command
     public function handle(BeelManager $manager, Container $container, WebhookSecretResolver $secrets): int
     {
         $credentials = $container->make(CredentialsResolver::class);
-        $apiKey = $this->stringOption('api-key') ?? $credentials->apiKey();
-        $companyId = $this->stringOption('company-id') ?? $credentials->companyId();
-        $accountId = $this->stringOption('account-id') ?? $credentials->accountId();
+        // With --api-key, the ids come only from the options: the default ones belong to another key.
+        $tenant = $this->stringOption('api-key') !== null;
+        $apiKey = $tenant ? $this->stringOption('api-key') : $credentials->apiKey();
+        $companyId = $this->stringOption('company-id') ?? ($tenant ? null : $credentials->companyId());
+        $accountId = $this->stringOption('account-id') ?? ($tenant ? null : $credentials->accountId());
 
         if ($apiKey === null) {
             $this->fail_('No BeeL API key: set services.beel.key (BEEL_API_KEY), bind a CredentialsResolver that returns one, or pass --api-key.');
@@ -104,7 +106,7 @@ final class CheckCommand extends Command
     private function checkAccount(MyIdentity $identity, ?string $accountId): void
     {
         if ($accountId !== null && $accountId !== $identity->getAccountId()) {
-            $this->fail_("services.beel.account_id is {$accountId}, but the API key belongs to account {$identity->getAccountId()}.");
+            $this->fail_("The expected account is {$accountId} (services.beel.account_id or --account-id), but the API key belongs to account {$identity->getAccountId()}.");
         }
     }
 

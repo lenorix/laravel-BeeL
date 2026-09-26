@@ -8,6 +8,8 @@ use Illuminate\Container\Container;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Generated\Client;
+use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
+use Lenorix\BeelSdk\Generated\Model\RepresentationDownloadResponse;
 use Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyProductsResource;
@@ -71,13 +73,23 @@ final class BeelCompany
     {
         return Container::getInstance()->make(SignedDownloadStorage::class)->store(
             function (): string {
+                // Only the generated client has this endpoint: map its errors like the SDK's resources do.
+                // Statuses the spec lists only as "default" (404, 409, ...) come back as an ErrorResponse
+                // with no status code, so their statusCode is 0.
                 try {
-                    return $this->raw->downloadCompanyRepresentationDocument($this->companyId)->getData()->getDownloadUrl();
-                } catch (BeelApiError $exception) {
-                    throw $exception;
+                    $response = $this->raw->downloadCompanyRepresentationDocument($this->companyId);
                 } catch (\Throwable $exception) {
-                    throw BeelApiError::fromGenerated($exception);
+                    throw $exception instanceof BeelApiError ? $exception : BeelApiError::fromGenerated($exception);
                 }
+
+                if ($response instanceof ErrorResponse) {
+                    throw BeelApiError::fromErrorResponse($response);
+                }
+                if (! $response instanceof RepresentationDownloadResponse) {
+                    throw new \UnexpectedValueException('BeeL returned no representation document link.');
+                }
+
+                return $response->getData()->getDownloadUrl();
             },
             DocumentKind::Pdf, "the representation document of company {$this->companyId}", $path, $disk, $overwrite, $options,
         );

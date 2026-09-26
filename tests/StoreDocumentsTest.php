@@ -72,3 +72,10 @@ it('refuses an existing representation document before calling BeeL', function (
 
     Http::assertNothingSent();
 });
+
+it('maps every BeeL error of the representation link to BeelApiError', function (int $status) {
+    Http::fake(['*/companies/company-1/representation/document' => BeelFake::error($status, 'SOMETHING_WRONG')]);
+
+    expect(fn () => app(BeelManager::class)->company()->storeRepresentationDocument('r.pdf', disk: 'docs'))
+        ->toThrow(fn (BeelApiError $e) => expect($e->apiCode)->toBe('SOMETHING_WRONG')->and($e->getMessage())->not->toBeEmpty());
+})->with([401, 403, 404, 409, 429, 500]);

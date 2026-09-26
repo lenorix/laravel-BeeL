@@ -143,7 +143,12 @@ final class BeelApiFake
         Http::fake(function (Request $request) {
             $path = (string) parse_url($request->url(), PHP_URL_PATH);
 
-            foreach ($this->routes as $key => $route) {
+            // Most specific first (an operation narrowed to an id before the same one for any id),
+            // whatever the order they were registered in.
+            $routes = $this->routes;
+            uasort($routes, fn (array $a, array $b): int => substr_count($a['pattern'], '[^/]+') <=> substr_count($b['pattern'], '[^/]+'));
+
+            foreach ($routes as $key => $route) {
                 if ($route['method'] !== $request->method()) {
                     continue;
                 }

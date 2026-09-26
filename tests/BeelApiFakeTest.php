@@ -46,10 +46,10 @@ it('answers creations with 201 and errors as given', function () {
     Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/companies/company-1/customers'));
 });
 
-it('narrows an operation to one id', function () {
+it('narrows an operation to one id, whatever the registration order', function () {
     BeelFake::api()
-        ->getCustomer(BeelFake::customer(['legal_name' => 'Uno SL']), id: 'c-1')
         ->getCustomer(BeelFake::customer(['legal_name' => 'Otro SL']))
+        ->getCustomer(BeelFake::customer(['legal_name' => 'Uno SL']), id: 'c-1')
         ->fake();
     $customers = app(BeelManager::class)->company()->customers;
 

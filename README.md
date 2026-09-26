@@ -34,7 +34,7 @@ Then check everything is in place:
 php artisan beel:check
 ```
 
-It is read-only. It reports problems with the key, the company, webhooks and the cache. To check one tenant, pass `--api-key`, `--company-id` and `--account-id`.
+It is read-only. It reports problems with the key, the company, webhooks and the cache. To check one tenant, pass `--api-key`, `--company-id` and `--account-id` (the key shows in `ps` and shell history).
 
 ## Usage
 
