@@ -93,6 +93,37 @@ Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event):
 
 BeeL may redeliver the same event (e.g. if a prior delivery timed out), so listeners that aren't naturally idempotent should deduplicate using `$event->id` — for example, skip processing if that id was already recorded, before doing any real work.
 
+For anything beyond trivial processing, implement the listener as a queued class instead of a closure, so it gets real retries (with your own backoff and failure handling) independent of whether BeeL happens to redeliver:
+
+```php
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+
+class ProcessBeelWebhook implements ShouldQueue
+{
+    use InteractsWithQueue;
+
+    public int $tries = 5;
+
+    public function backoff(): array
+    {
+        return [10, 30, 60, 300, 900];
+    }
+
+    public function handle(BeelWebhookReceived $event): void
+    {
+        // $event->payload['test'] is true only for test deliveries triggered from the BeeL dashboard.
+        // Skip (or route to a separate handler) test events so they never touch production side effects.
+        if ($event->payload['test'] ?? false) {
+            return;
+        }
+
+        // ... your idempotent processing for $event->type / $event->data
+    }
+}
+```
+
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 
 ## Requirements
