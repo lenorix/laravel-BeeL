@@ -26,6 +26,9 @@ Verified against the package source on 2026-09-26.
 | `http.timeout` / `http.connect_timeout` | `30` / `10` | Seconds |
 | `http.retries` / `http.retry_delay_ms` | `3` / `100` | Laravel retries on connection errors, 429 and 5xx |
 | `http.options` | `[]` | Extra Guzzle options |
+| `webhook_delivery_retry.max_age_minutes` | `1440` | Only retry events first attempted within this window |
+| `webhook_delivery_retry.max_attempts` | `8` | Give up after this many attempts (automatic ones included) |
+| `webhook_delivery_retry.schedule` | `null` | Cron expression to auto-schedule `beel:retry-webhook-deliveries` |
 
 ## BeelManager (singleton) and the `LaravelBeel` facade
 
@@ -46,7 +49,7 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 ## Transport, retries and idempotency
 
-- The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx with a fixed `retry_delay_ms`. It does not honour `Retry-After`; handle `BeelRateLimitError::$retryAfterSeconds` yourself for long waits.
+- The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx. On a 429 it waits the numeric-seconds `Retry-After` value (capped at 60s, BeeL's rate-limit window), falling back to `retry_delay_ms` when the header is absent or not that form. If retries are exhausted or disabled, handle `BeelRateLimitError::$retryAfterSeconds` yourself for longer waits.
 - The SDK adds one `Idempotency-Key` per logical POST before the transport, so Laravel's retries resend the same key. Pass your own key in the `$headers` argument when the operation may be retried across processes or queue attempts.
 - All requests go through Laravel's HTTP client, so HTTP client events, `Http::fake()` and global middleware apply.
 
@@ -58,7 +61,7 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 ## Webhook endpoint
 
-Flow of `POST /beel/webhook`:
+Flow of `POST /beel/webhook/{beelWebhookKey?}`:
 
 1. Header pre-filter, before the secret or body is touched: a missing header, no numeric `t`, no `v1` shaped like a lowercase SHA-256 hex digest, or a timestamp outside `webhook_replay_tolerance_seconds` returns `401`.
 2. `WebhookSecretResolver::resolve($request)` (default: `services.beel.webhook_secret`). No secret returns `503`, which BeeL retries.
