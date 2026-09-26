@@ -10,8 +10,9 @@ return [
     // for this many seconds so a redelivery gets the same 202 without dispatching BeelWebhookReceived
     // again. null or 0 disables it. Listeners should still deduplicate on $event->id for longer windows.
     'webhook_dedupe_seconds' => 900,
-    // Cache store for that memory; null uses the default store. Use one shared by all servers
-    // (redis, database, ...) when several servers receive webhooks.
+    // Cache store for that memory; null uses the default store. The claim must be atomic and shared by
+    // every process receiving webhooks: use redis, memcached, database or dynamodb (file only for a
+    // single server). Never array or null: with them deduplication silently does nothing.
     'webhook_dedupe_store' => null,
     // Safety net for `php artisan beel:retry-webhook-deliveries`, which asks BeeL to redeliver
     // webhook events that never reached this app (no attempt succeeded). It uses services.beel.key and

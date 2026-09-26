@@ -140,8 +140,24 @@ Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event):
 BeeL may redeliver the same event (e.g. if a prior delivery timed out); every delivery of an event carries the same id, also sent as its `Idempotency-Key` header. The package remembers accepted events for `webhook_dedupe_seconds` (15 minutes by default) in the cache: a redelivery within that window gets the same 202 and does not dispatch `BeelWebhookReceived` again, and two simultaneous deliveries of the same event dispatch it only once, because the claim uses the atomic `Cache::add()`. Details:
 
 - Only verified, accepted (202) deliveries are remembered, keyed on the signed payload id and the URL's webhook key. An unverified request can't block a real event, a 503 (e.g. wrong secret) is still retried by BeeL, and one tenant can't swallow another tenant's event id.
-- `webhook_dedupe_store` picks the cache store (default store if `null`). When several servers receive webhooks, use a store they share with atomic adds (Redis, Memcached, database); the file store only protects a single server.
+- `webhook_dedupe_store` picks the cache store (default store if `null`). See *Cache store requirements* below.
 - Set `webhook_dedupe_seconds` to `null` or `0` to disable it.
+
+#### Cache store requirements
+
+The deduplication is a check-and-claim that must happen in one indivisible step: "claim this event id only if nobody has claimed it yet". If it were a read followed by a write, two simultaneous deliveries of the same event could both read "not claimed" before either writes, and both would dispatch `BeelWebhookReceived`. It must also be visible to every process that receives webhooks (all PHP-FPM workers, Octane workers and servers), otherwise each process only sees its own claims.
+
+| Cache store | Atomic claim | Shared between servers | Use it for webhook deduplication |
+|---|---|---|---|
+| `redis` | Yes (Lua script) | Yes | Recommended |
+| `memcached` | Yes (native `add`) | Yes | Recommended |
+| `database` | Yes (`insertOrIgnore` on the unique key) | Yes | Recommended |
+| `dynamodb` | Yes (conditional write) | Yes | Recommended |
+| `file` | Yes (exclusive file lock) | No, one server only | Only if a single server receives webhooks |
+| `array` | No, and its memory lives per process | No | Never: deduplication silently does nothing |
+| `null` | Stores nothing | No | Never: deduplication silently does nothing |
+
+If your default cache store is `array` or `null` (common in tests or minimal setups), set `webhook_dedupe_store` to one of the recommended stores. The same kind of store is needed for `on_one_server` on the retry command schedule, which relies on atomic cache locks.
 
 Listeners that aren't naturally idempotent should still deduplicate using `$event->id` (for example with a unique index, as below), since the cache window is short and cache entries can be evicted.
 
