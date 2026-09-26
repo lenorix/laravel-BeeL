@@ -14,7 +14,7 @@ In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Leno
 
 ## Beel (entry point)
 
-- Public properties: `raw` (generated client with every OpenAPI operation, e.g. `$beel->raw->getMyIdentity()`), `catalogs`, `nif`, `accounts`.
+- Public properties: `raw` (generated client with every OpenAPI operation, for operations without a resource method), `me`, `catalogs`, `nif`, `accounts`.
 - `company(string $companyId): CompanyScope` and `account(string $accountId): AccountScope`. The argument is a UUID.
 - Deprecated, do not use: properties `invoices`, `customers`, `products`, `series`, `configuration` and method `downloadPdf()` (legacy session-focused routes).
 
@@ -69,8 +69,8 @@ Invoice model getters include `getId()`, `getNumber()`, `getInvoiceNumber()`, `g
 Methods: `get()`, `usage()`, `changeAccessLevel(ChangeAccessLevelRequest)`, `createClaimToken(?CreateClaimTokenRequest = null)`, `setOwner(SetAccountOwnerRequest)`, `endManagement()`.
 
 - `companies`: `list(array $query = [])`, `create(CreateCompanyRequest)`, `stats(array $query = [])`.
-- `members`: `list`, `get`, `update(string $id, ChangeMemberRoleRequest)`, `remove`, `listGrants(string $memberId)`, `putGrant(string $memberId, string $companyId, PutMemberGrantRequest)`, `removeGrant`.
-- `invitations`: `list`, `create(CreateInvitationRequest)`, `get`, `revoke`.
+- `members`: `list(array $query = [])`, `get`, `update(string $id, ChangeMemberRoleRequest)`, `remove`, `listGrants(string $memberId)`, `putGrant(string $memberId, string $companyId, PutMemberGrantRequest)`, `removeGrant`; generators `all()`, `allGrants(string $memberId)`.
+- `invitations`: `list(array $query = [])`, `create(CreateInvitationRequest)`, `get`, `revoke`.
 - `webhooks`: `list`, `create(CreateWebhookSubscriptionRequest)`, `get`, `update`, `delete`, `test(string $id)`, `rotateSecret(string $id)`, `listDeliveries(string $id, array $query = [])`, `retryDelivery(string $webhookId, string $deliveryId)`, generators `all()` and `allDeliveries(string $id)`.
 - `emails`: `list(array $query = [])`, `indicators(array $query = [])`, `get(string $emailId)`.
 

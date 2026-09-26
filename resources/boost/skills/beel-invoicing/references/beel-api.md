@@ -52,7 +52,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 
 ## Accounts and companies
 
-- Account (`account_id`): the tenant that pays and authenticates; owns keys, members and webhook subscriptions. Get it from `GET /v1/me/identity` (`$beel->raw->getMyIdentity()`).
+- Account (`account_id`): the tenant that pays and authenticates; owns keys, members and webhook subscriptions. Get it from `GET /v1/me/identity` (`$beel->me->identity()`).
 - Company (`company_id`): one NIF with its own invoices, customers, products and series, separate in test and production. Always a UUID; sending a NIF returns 400. The API key carries no "current company".
 - Create: `POST /v1/accounts/{account_id}/companies`. The NIF must exist in the AEAT census even in sandbox. `entity_type` (`INDIVIDUAL`/`LEGAL_ENTITY`) is immutable. `aeat_environment` TEST or PROD; PROD without a card returns `402 CHECKOUT_REQUIRED`. `activate` (default true) seeds series F/S/R and tax defaults. `NIF_ALREADY_REGISTERED` returns the existing id in `details.company_id`.
 - Activation per environment (`POST .../activations`, `DELETE .../activations?environment=PROD`, scheduled). Read `in_test`/`in_prod`; the `environment` field is deprecated. A company active in production cannot be deleted (`409 COMPANY_ACTIVE_IN_PRODUCTION`).

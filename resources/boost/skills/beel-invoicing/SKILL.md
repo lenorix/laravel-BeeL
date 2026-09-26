@@ -35,6 +35,7 @@ Any task that creates, issues, corrects, voids, lists, renders, emails or report
 9. Fix mistakes with `createCorrective()`, not by editing; void only invoices that should never have existed.
 
 ```php
+use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\BeelSdk\Builder\InvoiceBuilder;
 use Lenorix\BeelSdk\Generated\Model\CreateInvoiceRequestLinesItem;
 use Lenorix\BeelSdk\Generated\Model\CreateInvoiceRequestLinesItemMainTax;
@@ -56,8 +57,12 @@ $request = InvoiceBuilder::create()
     ->addLineObject($line)
     ->build();
 
-$draft = $company->invoices->create($request, [], ['Idempotency-Key' => 'invoice-create-order-'.$order->id]);
-$invoice = $company->invoices->issue($draft->getId(), [], ['Idempotency-Key' => 'invoice-issue-'.$draft->getId()]);
+$draft = $company->invoices
+    ->withOptions(new RequestOptions(idempotencyKey: 'invoice-create-order-'.$order->id))
+    ->create($request);
+$invoice = $company->invoices
+    ->withOptions(new RequestOptions(idempotencyKey: 'invoice-issue-'.$draft->getId()))
+    ->issue($draft->getId());
 
 $invoice->getInvoiceNumber();
 $invoice->getVerifactu()?->getSubmissionStatus(); // PENDING until the AEAT answers asynchronously

@@ -18,9 +18,12 @@ $account = app(BeelManager::class)->account();   // account scope from services.
 $company = app(BeelManager::class)->company(apiKey: $tenant->beel_api_key, companyId: $tenant->beel_company_id);
 
 $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoices, customers, products, series, ...
+foreach ($company->invoices->all(['limit' => 100]) as $invoice) {} // lazy iteration over every page
 ```
 
 ### Rules that must never be broken
+
+- Iterate every page with the resources' `all()` generators instead of hand-written `page` loops. Read the API key's account, environment and scopes with `$beel->me->identity()`; drop to `->raw` only for operations without a resource method.
 
 - Default credentials come from config (`services.beel.*`) through the bound `Lenorix\LaravelBeel\Contracts\CredentialsResolver`. When the app keeps keys elsewhere (database, current tenant), bind its own `CredentialsResolver` instead of passing credentials around or copying them into config at runtime.
 - Get clients only through `BeelManager` or the `LaravelBeel` facade. Never `new Lenorix\BeelSdk\Beel(...)`: that bypasses Laravel's HTTP client, the configured timeouts and retries, and `Http::fake()`.
@@ -30,7 +33,7 @@ $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoi
 - BeeL never recalculates your amounts; what you send is the fiscal truth. Set every line's tax explicitly: `main_tax` (type, percentage, regime_key) is mandatory on normal lines, a 0 % line needs an `exemption_reason`, and an omitted `irpf_rate` inherits the company default, so send `0` explicitly when nothing must be withheld.
 - `issue()` is irreversible: it assigns the definitive number and freezes the invoice. The AEAT submission is asynchronous, so a successful `issue()` does not mean the AEAT accepted it. Read `verifactu.submission_status` (or handle `verifactu.status.updated`); only `REJECTED` needs action.
 - Issued invoices are immutable. Correct them with a corrective invoice (`createCorrective`, codes R1 to R5). Use `void()` only for an invoice that should never have existed; its number is burned forever.
-- Send an `Idempotency-Key` header derived from your own domain id on create, issue, void and corrective calls, and set `external_ref` when an invoice must exist only once per order or payment. The package's automatic retries reuse the same key.
+- Send an `Idempotency-Key` derived from your own domain id on create, issue, void and corrective calls (`$company->invoices->withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: ...))->issue($id)`, or the method's `$headers` argument), and set `external_ref` when an invoice must exist only once per order or payment. The package's automatic retries reuse the same key.
 - An invoice PDF from `getPdf()` is a presigned URL that expires after about 5 minutes. Never store the URL; fetch it when needed. Drafts have no fiscal PDF (use `preview()`).
 - The API key prefix picks the environment: `beel_sk_test_` is sandbox, `beel_sk_live_` is production, with the same base URL. A 404 can mean the key and the resource belong to different environments.
 - API errors are `Lenorix\BeelSdk\Exception\BeelApiError` subclasses (`BeelValidationError`, `BeelConflictError`, `BeelNotFoundError`, `BeelAuthError`, `BeelRateLimitError`). Branch on `$e->apiCode`, never on the localized message, and log `$e->requestId`. Network failures are `Lenorix\LaravelBeel\LaravelNetworkException` or `LaravelClientException`, not `BeelApiError`.
