@@ -1,6 +1,6 @@
 # Laravel BeeL
 
-An optional Laravel integration for the standalone [`lenorix/beel-sdk`](https://github.com/lenorix/BeeL-php-sdk). The SDK remains the source of truth for BeeL endpoints, authentication, request models, idempotency keys, and webhook signature verification. This package adds Laravel configuration, HTTP client integration, tenant-scoped clients, and webhook events.
+Laravel integration for the [`lenorix/beel-sdk`](https://github.com/lenorix/BeeL-php-sdk) client. The SDK handles the BeeL API itself; this package wires it into Laravel with config, the Laravel HTTP client, tenant-scoped clients, and webhook events.
 
 ## Installation
 
