@@ -134,6 +134,34 @@ class ProcessBeelWebhook implements ShouldQueue
 }
 ```
 
+### Recovering deliveries that never arrived
+
+BeeL retries a failed delivery only 5 times over about 75 seconds, and not at all after a 4xx. As a safety net, `php artisan beel:retry-webhook-deliveries` reads each subscription's delivery history and asks BeeL to redeliver every event with no successful attempt, so the event goes through the normal verified endpoint again and BeeL records the delivery:
+
+- Events with any successful attempt are skipped; attempts are grouped by BeeL's event id.
+- Only events first attempted within `max_age_minutes` (default 24 h) are retried.
+- Events that already have `max_attempts` attempts (default 8, BeeL's automatic ones included) are given up.
+- Subscriptions BeeL has deactivated (it pauses them after 25 consecutive failures over more than 48 hours) are not retried: the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`), so the app decides how to notify or react.
+- The command exits with a failure code when something was given up, a retry was rejected, or a subscription is inactive, so the scheduler or your monitoring notices.
+
+Options: `--account-id=`, `--api-key=` (default to `services.beel.*`), `--webhook-id=` (repeatable), `--max-age=` (minutes), `--max-attempts=`, `--dry-run`. It needs an account id (`services.beel.account_id`) and a key with webhook read and write scopes.
+
+To run it periodically, either set a cron expression in `config/beel.php`:
+
+```php
+'webhook_delivery_retry' => [
+    'schedule' => '*/15 * * * *',
+],
+```
+
+or schedule it yourself, for example in `routes/console.php`:
+
+```php
+Schedule::command('beel:retry-webhook-deliveries')->everyFifteenMinutes()->withoutOverlapping();
+```
+
+Either way Laravel's scheduler (`schedule:run`) must be running. For several accounts with their own credentials, schedule one call per account passing `--account-id` and `--api-key`.
+
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 
 ## AI guidelines (Laravel Boost)

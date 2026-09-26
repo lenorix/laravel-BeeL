@@ -25,4 +25,4 @@ jobs:
         uses: ramsey/composer-install@26d8a556604053a9612623447203a691f406fbe6 # v4
 
       - name: Run PHPStan
-        run: ./vendor/bin/phpstan --error-format=github
+        run: ./vendor/bin/phpstan --error-format=github --memory-limit=512M

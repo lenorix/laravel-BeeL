@@ -2,9 +2,11 @@
 
 namespace Lenorix\LaravelBeel;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
+use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -15,7 +17,8 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
     {
         $package->name('laravel-beel')
             ->hasConfigFile()
-            ->hasRoutes('beel');
+            ->hasRoutes('beel')
+            ->hasCommand(RetryWebhookDeliveriesCommand::class);
     }
 
     public function packageRegistered(): void
@@ -27,6 +30,14 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $cron = config('beel.webhook_delivery_retry.schedule');
+
+            if (is_string($cron) && $cron !== '') {
+                $schedule->command(RetryWebhookDeliveriesCommand::class)->cron($cron)->withoutOverlapping();
+            }
+        });
+
         if (! config('beel.register_webhook_route', true)) {
             return;
         }
