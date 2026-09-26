@@ -127,11 +127,11 @@ $account->members->list();
 - whether BeeL accepts the key, which account and environment it belongs to, and whether that matches `services.beel.account_id`;
 - whether the default company can issue invoices (`issuingReadiness()`), listing the blockers if not;
 - whether the key has the `webhooks:read` / `webhooks:write` scopes the retry command needs (read from BeeL's identity endpoint, no write attempted);
-- whether a BeeL webhook subscription points at this app (`APP_URL` + the webhook path; per-tenant URLs under it count), is active, and uses HTTPS;
+- whether a BeeL webhook subscription points at this app (`APP_URL` + the webhook path; per-tenant URLs under it count), is active, and uses HTTPS, and that no two subscriptions deliver to the same URL (the app can only verify one secret);
 - whether a webhook secret is configured (with the default resolver);
 - whether the webhook dedupe cache store is usable: `array`/`null` is an error, `file` a warning.
 
-Errors exit with status 1; warnings are reported but exit 0.
+Errors exit with status 1; warnings are reported but exit 0. It checks the default credentials only (in multi-tenant apps with a request-bound resolver it reports a missing key, which is expected), and it inspects the dedupe store's type without connecting to it, so an unreachable Redis is not detected.
 
 ## Laravel HTTP client
 
@@ -291,7 +291,8 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 
 - checks the URL (`APP_URL` + the webhook path, or `--url=`; it must be HTTPS) and that `.env` is writable before calling BeeL, and asks for confirmation in production (`--force` skips it);
 - refuses to create a second subscription for the same URL (it would sign with a different secret the app can't verify); `--rotate` replaces the existing subscription's secret instead;
-- writes `.env` atomically, keeping every other line; if it still can't save a newly created subscription's secret, it deletes that subscription so nothing is left half-configured. After `--rotate` the old secret is already invalid, so in that one case it prints the new secret once as the only way to recover.
+- refuses when the app would not read what it writes: a custom `WebhookSecretResolver` is bound, or `services.beel.webhook_secret` reads a different variable than `--env-key`;
+- writes `.env` in place with a file lock, like `php artisan key:generate`: other lines, the file's owner, group and mode are kept, and a symlinked `.env` (zero-downtime deploys) is written through to the shared file instead of being replaced. If it still can't save a newly created subscription's secret, it deletes that subscription so nothing is left half-configured. After `--rotate` the old secret is already invalid, so in that one case it prints the new secret once as the only way to recover.
 
 It subscribes every event except the provisioner-only ones (`--event=` to choose), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps create each tenant's subscription with `$account->webhooks->create()` and store its secret per tenant.
 

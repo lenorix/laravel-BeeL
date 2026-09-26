@@ -159,12 +159,22 @@ final class CheckCommand extends Command
             return;
         }
 
-        $matching = array_filter($subscriptions, fn (WebhookSubscription $s) => $s->getUrl() === $expected || str_starts_with($s->getUrl(), $expected.'/'));
+        $matching = array_filter($subscriptions, fn (WebhookSubscription $s) => rtrim($s->getUrl(), '/') === $expected || str_starts_with($s->getUrl(), $expected.'/'));
 
         if ($matching === []) {
             $this->warn_("No BeeL webhook subscription points at {$expected} (per-tenant URLs under it also count). Check APP_URL if the app is served elsewhere.");
 
             return;
+        }
+
+        $byUrl = [];
+        foreach ($matching as $subscription) {
+            $byUrl[rtrim($subscription->getUrl(), '/')][] = $subscription->getId();
+        }
+        foreach ($byUrl as $url => $ids) {
+            if (count($ids) > 1) {
+                $this->fail_('Subscriptions '.implode(', ', $ids)." all deliver to {$url}; each signs with its own secret, so the app can verify only one of them. Delete the extra ones.");
+            }
         }
 
         foreach ($matching as $subscription) {

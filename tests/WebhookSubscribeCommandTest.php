@@ -1,7 +1,9 @@
 <?php
 
 use Illuminate\Http\Client\Request as ClientRequest;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Support\EnvFileWriter;
 
 beforeEach(function () {
@@ -167,4 +169,66 @@ it('asks for confirmation in production', function () {
     $this->artisan('beel:webhook:subscribe')->expectsConfirmation('Are you sure you want to run this command?', 'no')->assertFailed();
 
     Http::assertNothingSent();
+});
+
+it('writes through a symlinked .env to the shared file and keeps the link', function () {
+    $shared = $this->envDir.'/shared.env';
+    rename($this->envDir.'/.env', $shared);
+    symlink($shared, $this->envDir.'/.env');
+    fakeBeelSubscriptionApi();
+
+    $this->artisan('beel:webhook:subscribe')->assertSuccessful();
+
+    expect(is_link($this->envDir.'/.env'))->toBeTrue()
+        ->and(file_get_contents($shared))->toContain("BEEL_WEBHOOK_SECRET=whsec_new123\n");
+});
+
+it('updates .env in place, keeping the same file (and so its owner and mode)', function () {
+    $inode = fileinode($this->envDir.'/.env');
+    fakeBeelSubscriptionApi();
+
+    $this->artisan('beel:webhook:subscribe')->assertSuccessful();
+
+    clearstatcache();
+    expect(fileinode($this->envDir.'/.env'))->toBe($inode);
+});
+
+it('refuses when a custom webhook secret resolver is bound, since the app would not read .env', function () {
+    app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
+    {
+        public function resolve(Request $request): ?string
+        {
+            return 'from-database';
+        }
+    });
+    Http::fake();
+
+    $this->artisan('beel:webhook:subscribe', ['--rotate' => true])->expectsOutputToContain('WebhookSecretResolver')->assertFailed();
+
+    Http::assertNothingSent();
+});
+
+it('refuses when services.beel.webhook_secret reads a different variable than the one it would write', function () {
+    putenv('BEEL_WEBHOOK_SECRET=from-env');
+    config()->set('services.beel.webhook_secret', 'from-another-variable');
+    Http::fake();
+
+    $this->artisan('beel:webhook:subscribe')->expectsOutputToContain('services.beel.webhook_secret')->assertFailed();
+
+    Http::assertNothingSent();
+    putenv('BEEL_WEBHOOK_SECRET');
+});
+
+it('treats a trailing slash as the same URL when looking for an existing subscription', function () {
+    fakeBeelSubscriptionApi([existingSubscription('https://app.test/beel/webhook/')]);
+
+    $this->artisan('beel:webhook:subscribe')->expectsOutputToContain('--rotate')->assertFailed();
+
+    Http::assertNotSent(fn (ClientRequest $r) => $r->method() === 'POST');
+});
+
+it('warns that rotating does not reactivate an inactive subscription', function () {
+    fakeBeelSubscriptionApi([array_merge(existingSubscription(), ['active' => false])], 'whsec_rotated');
+
+    $this->artisan('beel:webhook:subscribe', ['--rotate' => true])->expectsOutputToContain('inactive')->assertSuccessful();
 });

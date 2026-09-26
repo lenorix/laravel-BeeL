@@ -5,15 +5,17 @@ declare(strict_types=1);
 namespace Lenorix\LaravelBeel\Support;
 
 /**
- * @internal Sets one KEY=value line in a .env file atomically (temp file + rename), keeping every
- * other line and the file's permissions.
+ * @internal Sets one KEY=value line in a .env file, keeping every other line. Writes in place (like
+ * Laravel's key:generate): following a symlinked .env to the shared file instead of replacing the link,
+ * and keeping the file's inode, owner, group and mode, which a temp-file-and-rename would not.
  */
 class EnvFileWriter
 {
     public function write(string $path, string $key, string $value): void
     {
-        $contents = file_get_contents($path);
-        if ($contents === false) {
+        $real = realpath($path);
+        $contents = $real === false ? false : file_get_contents($real);
+        if ($real === false || $contents === false) {
             throw new \RuntimeException("Cannot read {$path}.");
         }
 
@@ -24,20 +26,8 @@ class EnvFileWriter
             ? (string) preg_replace_callback($pattern, fn () => $line, $contents, 1)
             : ($contents === '' || str_ends_with($contents, "\n") ? $contents : $contents."\n").$line."\n";
 
-        $temp = tempnam(dirname($path), '.env.beel');
-        if ($temp === false || file_put_contents($temp, $updated) === false) {
-            throw new \RuntimeException("Cannot write a temporary file next to {$path}.");
-        }
-
-        $permissions = fileperms($path);
-        if ($permissions !== false) {
-            chmod($temp, $permissions & 0777);
-        }
-
-        if (! rename($temp, $path)) {
-            @unlink($temp);
-
-            throw new \RuntimeException("Cannot replace {$path}.");
+        if (file_put_contents($real, $updated, LOCK_EX) === false) {
+            throw new \RuntimeException("Cannot write {$path}.");
         }
     }
 

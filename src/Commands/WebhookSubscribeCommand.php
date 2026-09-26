@@ -6,11 +6,14 @@ namespace Lenorix\LaravelBeel\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Console\ConfirmableTrait;
+use Illuminate\Support\Env;
 use Lenorix\BeelSdk\Generated\Model\CreateWebhookSubscriptionRequest;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
 use Lenorix\BeelSdk\Webhook\WebhookEventType;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
+use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Support\EnvFileWriter;
 
 /**
@@ -35,7 +38,7 @@ final class WebhookSubscribeCommand extends Command
     /** Only sent to the account that provisioned a managed account. */
     private const PROVISIONER_EVENTS = ['account.claimed', 'company.created', 'representation.signed'];
 
-    public function handle(BeelManager $manager, EnvFileWriter $writer): int
+    public function handle(BeelManager $manager, EnvFileWriter $writer, WebhookSecretResolver $secrets): int
     {
         if (! $this->confirmToProceed()) {
             return self::FAILURE;
@@ -51,8 +54,9 @@ final class WebhookSubscribeCommand extends Command
 
             return self::FAILURE;
         }
-        if (! is_file($envPath) || ! is_writable($envPath) || ! is_writable(dirname($envPath))) {
-            $this->error("{$envPath} (.env) must exist and be writable, with a writable directory.");
+        $realEnvPath = realpath($envPath);
+        if ($realEnvPath === false || ! is_file($realEnvPath) || ! is_writable($realEnvPath)) {
+            $this->error("{$envPath} (.env) must exist and be writable.");
 
             return self::FAILURE;
         }
@@ -60,6 +64,24 @@ final class WebhookSubscribeCommand extends Command
             $this->error("Invalid .env key {$envKey}.");
 
             return self::FAILURE;
+        }
+
+        // The app must actually read the secret this command writes, or --rotate would kill the
+        // secret it really uses and store the new one where nothing reads it.
+        if (! $secrets instanceof ConfigWebhookSecretResolver) {
+            $this->error('A custom WebhookSecretResolver is bound, so the app does not read the webhook secret from .env. Manage those subscriptions with $account->webhooks instead.');
+
+            return self::FAILURE;
+        }
+        if (! $this->laravel->configurationIsCached()) {
+            $configured = config('services.beel.webhook_secret');
+            $current = Env::get($envKey);
+
+            if (is_string($configured) && $configured !== '' && $configured !== $current) {
+                $this->error("services.beel.webhook_secret does not come from {$envKey}; the secret would be written where the app doesn't read it. Pass the right --env-key.");
+
+                return self::FAILURE;
+            }
         }
 
         try {
@@ -76,6 +98,10 @@ final class WebhookSubscribeCommand extends Command
                 $this->error("There is no subscription for {$url} to rotate. Run without --rotate to create it.");
 
                 return self::FAILURE;
+            }
+
+            if (! $existing->getActive()) {
+                $this->warn("Subscription {$existing->getId()} is inactive; rotating its secret does not reactivate it (BeeL needs a successful test delivery first).");
             }
 
             return $this->rotate($account, $existing, $writer, $envPath, $envKey);
@@ -170,7 +196,7 @@ final class WebhookSubscribeCommand extends Command
             $result = $account->webhooks->list(['page' => $page++, 'limit' => 100]);
 
             foreach ($result->getWebhooks() as $subscription) {
-                if ($subscription->getUrl() === $url) {
+                if (rtrim($subscription->getUrl(), '/') === rtrim($url, '/')) {
                     return $subscription;
                 }
             }

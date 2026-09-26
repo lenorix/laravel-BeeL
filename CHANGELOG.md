@@ -30,7 +30,7 @@ First release. Requires PHP 8.4+, Laravel 12 or 13, and `lenorix/beel-sdk` 0.2+.
   - Checks one account by default. Bind `Contracts\WebhookRetryAccounts` to check several, each with its own key.
   - Optional automatic scheduling (`webhook_delivery_retry.schedule`, plus `on_one_server`).
   - The API key needs the `webhooks:read` and `webhooks:write` scopes.
-- `php artisan beel:webhook:subscribe`, which creates this app's webhook subscription (or rotates its secret with `--rotate`) and writes the secret to `.env` atomically, without printing it.
+- `php artisan beel:webhook:subscribe`, which creates this app's webhook subscription (or rotates its secret with `--rotate`) and writes the secret to `.env` in place (keeping owner, mode and symlinks), without printing it.
 - `php artisan beel:check`, a read-only diagnosis of the key, account, company readiness, key scopes, webhook subscription, webhook secret and dedupe cache store.
 - Test helpers for apps: the `Testing\InteractsWithBeelWebhooks` trait (`postBeelWebhook()`) and `Testing\WebhookSignature::sign()`.
 - Laravel Boost guidelines and a `beel-invoicing` skill for AI coding agents, covering this package, the SDK, BeeL's API, VERI*FACTU rules, and what is out of scope (B2B e-invoicing, TicketBAI, SII).

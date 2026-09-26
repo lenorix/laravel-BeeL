@@ -129,3 +129,10 @@ it('warns when no webhook secret is configured', function () {
 
     $this->artisan('beel:check')->expectsOutputToContain('webhook_secret')->assertSuccessful();
 });
+
+it('fails when two subscriptions deliver to the same URL, since one signs with a secret the app cannot verify', function () {
+    $sub = fn (string $id, string $url) => ['id' => $id, 'url' => $url, 'events' => ['invoice.issued'], 'active' => true, 'created_at' => now()->format(DATE_ATOM)];
+    fakeBeelCheckApi(['subscriptions' => [$sub('wh-1', 'https://app.test/beel/webhook'), $sub('wh-2', 'https://app.test/beel/webhook/')]]);
+
+    $this->artisan('beel:check')->expectsOutputToContain('wh-2')->assertFailed();
+});
