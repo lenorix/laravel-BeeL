@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace Lenorix\LaravelBeel\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Lenorix\BeelSdk\Generated\Model\WebhookDeliveryLog;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
+use Lenorix\LaravelBeel\AccountCredentials;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 
@@ -39,36 +42,50 @@ final class RetryWebhookDeliveriesCommand extends Command
 
     private bool $healthy = true;
 
-    public function handle(BeelManager $manager): int
+    public function handle(BeelManager $manager, Container $container): int
     {
-        try {
-            $account = $manager->account(
-                apiKey: $this->stringOption('api-key'),
-                accountId: $this->stringOption('account-id'),
-            );
-        } catch (\InvalidArgumentException $exception) {
-            $this->error($exception->getMessage());
-
-            return self::FAILURE;
-        }
-
         $maxAge = (int) ($this->stringOption('max-age') ?? config('beel.webhook_delivery_retry.max_age_minutes', 1440));
         $maxAttempts = (int) ($this->stringOption('max-attempts') ?? config('beel.webhook_delivery_retry.max_attempts', 8));
         $cutoff = Carbon::now()->subMinutes($maxAge);
 
+        $apiKey = $this->stringOption('api-key');
+        $accountId = $this->stringOption('account-id');
+        $accounts = $apiKey !== null || $accountId !== null
+            ? [new AccountCredentials($accountId, $apiKey)]
+            : $container->make(WebhookRetryAccounts::class)->accounts();
+
+        foreach ($accounts as $credentials) {
+            try {
+                $account = $manager->account(apiKey: $credentials->apiKey, accountId: $credentials->accountId);
+            } catch (\InvalidArgumentException $exception) {
+                $this->error($exception->getMessage());
+                $this->healthy = false;
+
+                continue;
+            }
+
+            $this->processAccount($account, $cutoff, $maxAttempts);
+        }
+
+        return $this->healthy ? self::SUCCESS : self::FAILURE;
+    }
+
+    private function processAccount(BeelAccount $account, Carbon $cutoff, int $maxAttempts): void
+    {
         try {
             $webhookIds = $this->subscriptionIds($account);
         } catch (\Throwable $exception) {
             $this->error("Could not list the webhook subscriptions of account {$account->accountId}: {$exception->getMessage()}");
+            $this->healthy = false;
 
-            return self::FAILURE;
+            return;
         }
 
         foreach ($webhookIds as $webhookId) {
             try {
                 $deliveries = $this->deliveries($account, $webhookId);
             } catch (\Throwable $exception) {
-                $this->error("Could not read the deliveries of webhook {$webhookId}: {$exception->getMessage()}");
+                $this->error("Could not read the deliveries of webhook {$webhookId} of account {$account->accountId}: {$exception->getMessage()}");
                 $this->healthy = false;
 
                 continue;
@@ -78,8 +95,6 @@ final class RetryWebhookDeliveriesCommand extends Command
                 ->groupBy(fn (WebhookDeliveryLog $log) => $log->getWebhookEventId())
                 ->each(fn (Collection $attempts, string $eventId) => $this->handleEvent($account, $webhookId, $eventId, $attempts, $cutoff, $maxAttempts));
         }
-
-        return $this->healthy ? self::SUCCESS : self::FAILURE;
     }
 
     /** @param Collection<int, WebhookDeliveryLog> $attempts */
@@ -99,7 +114,7 @@ final class RetryWebhookDeliveriesCommand extends Command
         if ($latest->getDeliveredAt()->getTimestamp() > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()) {
             return;
         }
-        $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId}";
+        $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId} of account {$account->accountId}";
 
         if ($latest->getAttemptNumber() >= $maxAttempts) {
             $this->reportAbandoned($account, $webhookId, $eventId, $latest, $label);
@@ -199,7 +214,7 @@ final class RetryWebhookDeliveriesCommand extends Command
             lastError: $field('lastError', fn () => $subscription->getLastError()),
         );
 
-        $message = "BeeL webhook subscription {$event->subscriptionId} is inactive; BeeL will not deliver to it until it is reactivated.";
+        $message = "BeeL webhook subscription {$event->subscriptionId} of account {$event->accountId} is inactive; BeeL will not deliver to it until it is reactivated.";
         $this->warn($message);
         Log::warning($message, [
             'account_id' => $event->accountId,

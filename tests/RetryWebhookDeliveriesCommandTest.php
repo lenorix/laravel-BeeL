@@ -5,6 +5,8 @@ use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Lenorix\LaravelBeel\AccountCredentials;
+use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 
@@ -342,4 +344,72 @@ it('registers the configured schedule', function () {
 
     expect($events)->toHaveCount(1)
         ->and($events->first()->expression)->toBe('*/15 * * * *');
+});
+
+function bindRetryAccounts(array $accounts): void
+{
+    app()->bind(WebhookRetryAccounts::class, fn () => new class($accounts) implements WebhookRetryAccounts
+    {
+        public function __construct(private array $accounts) {}
+
+        public function accounts(): iterable
+        {
+            foreach ($this->accounts as $accountId => $apiKey) {
+                yield new AccountCredentials($accountId, $apiKey);
+            }
+        }
+    });
+}
+
+/** Two accounts, each with one subscription holding one never-delivered event. `acc-bad` answers 403. */
+function fakeTwoAccountWebhookApi(): void
+{
+    Http::fake(function (ClientRequest $request) {
+        $path = parse_url($request->url(), PHP_URL_PATH);
+
+        if ($request->method() === 'POST') {
+            return Http::response(['success' => true, 'data' => ['id' => 'x']], 200);
+        }
+        if (preg_match('#/accounts/(acc-[a-z0-9]+)/webhooks$#', $path, $m)) {
+            return $m[1] === 'acc-bad'
+                ? Http::response(['success' => false, 'error' => ['code' => 'FORBIDDEN', 'message' => 'no']], 403)
+                : Http::response(beelPage('webhooks', [beelSubscription("wh-{$m[1]}")]), 200);
+        }
+        if (preg_match('#/webhooks/wh-(acc-[a-z0-9]+)/deliveries$#', $path, $m)) {
+            return Http::response(beelPage('deliveries', [beelDelivery("d-{$m[1]}", "evt-{$m[1]}", 1, false, 5)]), 200);
+        }
+
+        return Http::response(['success' => false], 404);
+    });
+}
+
+it('checks every account the bound provider returns, each with its own key', function () {
+    bindRetryAccounts(['acc-1' => 'beel_sk_test_one', 'acc-2' => 'beel_sk_test_two']);
+    fakeTwoAccountWebhookApi();
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d-acc-1', 'd-acc-2']);
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_contains($r->url(), '/accounts/acc-1/') && $r->hasHeader('Authorization', 'Bearer beel_sk_test_one'));
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_contains($r->url(), '/accounts/acc-2/') && $r->hasHeader('Authorization', 'Bearer beel_sk_test_two'));
+});
+
+it('keeps going with the other accounts when one fails', function () {
+    bindRetryAccounts(['acc-bad' => 'beel_sk_test_bad', 'acc-2' => 'beel_sk_test_two']);
+    fakeTwoAccountWebhookApi();
+
+    $this->artisan('beel:retry-webhook-deliveries')
+        ->expectsOutputToContain('acc-bad')
+        ->assertFailed();
+
+    expect(retriedDeliveryIds())->toBe(['d-acc-2']);
+});
+
+it('only checks the account given as options, not the provider', function () {
+    app()->bind(WebhookRetryAccounts::class, fn () => throw new RuntimeException('The provider must not be used when options are given.'));
+    fakeTwoAccountWebhookApi();
+
+    $this->artisan('beel:retry-webhook-deliveries', ['--account-id' => 'acc-2', '--api-key' => 'beel_sk_test_two'])->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d-acc-2']);
 });

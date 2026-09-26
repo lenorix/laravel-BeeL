@@ -177,7 +177,7 @@ BeeL retries a failed delivery only 5 times over about 75 seconds, and not at al
 - Subscriptions BeeL has deactivated (it pauses them after 25 consecutive failures over more than 48 hours) are not retried: the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`), so the app decides how to notify or react.
 - The command exits with a failure code when something was given up, a retry was rejected, or a subscription is inactive, so the scheduler or your monitoring notices.
 
-It uses `services.beel.key` and `services.beel.account_id` (or `--api-key` / `--account-id`). **If you use this command, create the API key with the `webhooks:read` and `webhooks:write` scopes**: listing subscriptions and deliveries needs the first, asking BeeL to retry needs the second. BeeL fixes a key's scopes at creation, so a key without them answers 403.
+**If you use this command, create the API key with the `webhooks:read` and `webhooks:write` scopes**: listing subscriptions and deliveries needs the first, asking BeeL to retry needs the second. BeeL fixes a key's scopes at creation, so a key without them answers 403.
 
 Options: `--account-id=`, `--api-key=`, `--webhook-id=` (repeatable), `--max-age=` (minutes), `--max-attempts=`, `--dry-run`.
 
@@ -197,22 +197,29 @@ or schedule it yourself, for example in `routes/console.php`:
 Schedule::command('beel:retry-webhook-deliveries')->everyFifteenMinutes()->withoutOverlapping();
 ```
 
-Either way Laravel's scheduler (`schedule:run`) must be running. For several accounts with their own credentials, run it in-process so API keys never appear on a command line (visible in `ps` and `schedule:list`):
+Either way Laravel's scheduler (`schedule:run`) must be running.
+
+By default the command checks one account: the one from the bound `CredentialsResolver` (`services.beel.account_id` and `services.beel.key` unless you bound your own). To check several accounts, for example every tenant in your database, bind `Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts`; the scheduled run then goes through all of them, each with its own key, and a failing account doesn't stop the rest:
 
 ```php
-use Illuminate\Support\Facades\Artisan;
+use Lenorix\LaravelBeel\AccountCredentials;
+use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 
-Schedule::call(function () {
-    foreach (Tenant::all() as $tenant) {
-        Artisan::call('beel:retry-webhook-deliveries', [
-            '--account-id' => $tenant->beel_account_id,
-            '--api-key' => $tenant->beel_webhooks_api_key,
-        ]);
+class TenantWebhookRetryAccounts implements WebhookRetryAccounts
+{
+    public function accounts(): iterable
+    {
+        foreach (Tenant::whereNotNull('beel_account_id')->cursor() as $tenant) {
+            yield new AccountCredentials($tenant->beel_account_id, $tenant->beel_api_key);
+        }
     }
-})->everyFifteenMinutes()->withoutOverlapping();
+}
+
+// In a service provider's register():
+$this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class);
 ```
 
-Never pass `--api-key` through `Schedule::command()`.
+`--account-id` / `--api-key` check just that one account instead, for one-off runs. Don't pass `--api-key` through `Schedule::command()`: it would show in `ps` and `schedule:list`; bind `WebhookRetryAccounts` instead.
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly. For tenant-specific secrets, replace the `WebhookSecretResolver` binding and resolve the secret from trusted request metadata (such as a route identifier or known endpoint) before verifying the body. Do not select a secret based on unverified payload contents.
 

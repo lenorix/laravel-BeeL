@@ -5,7 +5,9 @@ use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\ConfigCredentialsResolver;
 use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
+use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
+use Lenorix\LaravelBeel\CredentialsWebhookRetryAccounts;
 use Lenorix\LaravelBeel\Facades\LaravelBeel;
 
 it('binds BeelManager as a singleton', function () {
@@ -22,6 +24,10 @@ it('binds WebhookSecretResolver to the config-based resolver by default', functi
 
 it('binds CredentialsResolver to the config-based resolver by default', function () {
     expect(app(CredentialsResolver::class))->toBeInstanceOf(ConfigCredentialsResolver::class);
+});
+
+it('binds WebhookRetryAccounts to the credentials-based provider by default', function () {
+    expect(app(WebhookRetryAccounts::class))->toBeInstanceOf(CredentialsWebhookRetryAccounts::class);
 });
 
 it('resolves the facade to BeelManager', function () {
