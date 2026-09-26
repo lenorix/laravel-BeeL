@@ -1,6 +1,6 @@
 # BeeL API behaviour
 
-Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at https://docs.beel.es/api/openapi) on 2026-09-26. Limits, codes and dates change: when a detail matters, confirm it at the source. JSON field names below are snake_case; SDK models expose them as camelCase getters and setters.
+Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at https://docs.beel.es/api/openapi) on 2026-09-26; the VERI*FACTU, tax, international, regime-key and Stripe sections were rechecked against the official guides on 2026-09-27. Limits, codes and dates change: when a detail matters, confirm it at the source. JSON field names below are snake_case; SDK models expose them as camelCase getters and setters.
 
 ## What BeeL covers
 
@@ -34,7 +34,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 | 409 `CONCURRENT_MODIFICATION` | Re-read and retry |
 | 402/403/429 plan or quota errors | Follow `details.action` |
 
-- Rate limits: fixed 60 s window, 300 requests/min per credential (standard), 1000/min per IP (global). A 429 carries `Retry-After`, `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (only on 429).
+- Rate limits: fixed 60 s window, 300 requests/min per credential (standard), 1000/min per IP (global, shared by every key on the host; extra keys don't raise it). A 429 carries `Retry-After`, `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (only on 429).
 - Request bodies are capped at 2 MB. Unknown query parameters are rejected with 400.
 - The deprecated flat routes (`/v1/invoices`, ... with a `BeeL-Active-Company` header) retire on 2026-12-09.
 
@@ -77,6 +77,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 
 - Types: `STANDARD` (AEAT F1), `SIMPLIFIED` (F2), `CORRECTIVE` (created only via the corrective endpoint), `PROFORMA` (non-fiscal, numbered `PRO-...`, never sent to the AEAT).
 - Statuses: `SCHEDULED`, `DRAFT`, `ISSUED`, `SENT`, `PAID`, `OVERDUE`, `RECTIFIED`, `VOIDED`, `CONVERTED`, `ACTIVE`, `EXPIRED`.
+- `issue_date` is always today (set by the server, anti-fraud law); record an earlier operation with `operation_date`, and use scheduling for a future issue date.
 - Create body: `series_id` (default series if omitted), `operation_date`, `due_date` (not in the past), `recipient`, `lines` (at least one), `payment_info{method, iban, swift, payment_term_days}`, `notes`, `external_ref`, `metadata`, `options{issue_directly, wait_for_pdf, send_automatically, email_config, attach_source_invoices}`.
 - `payment_info.method`: `NONE`, `BANK_TRANSFER` (default, needs `iban`), `CARD`, `CASH`, `CHECK`, `DIRECT_DEBIT`, `BIZUM`, `OTHER`.
 - Issue is irreversible and assigns the number. With VERI*FACTU enabled the recipient's census status is checked before numbering: an uncensused recipient returns 422 and no number is consumed. AEAT submission and PDF generation happen asynchronously after the 2xx.
@@ -87,7 +88,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 ### Standard vs simplified
 
 - F1 `STANDARD` needs `recipient.nif` or `recipient.alternative_id`. A Spanish individual's name must match the census.
-- F2 `SIMPLIFIED`: total including VAT up to 3,000 EUR; empty recipient allowed only up to 400 EUR; forbidden with IRPF, recargo de equivalencia, reverse charge (ISP) or cross-border/OSS (`SIMPLIFICADA_FORBIDS_IRPF`, `_SURCHARGE`, `_ISP`, `_CROSS_BORDER`).
+- F2 `SIMPLIFIED`: total including VAT up to 3,000 EUR (2,600 + 21 % = 3,146 is over); empty recipient (`recipient: {}`, BeeL fills consumidor final) only up to 400 EUR, between 400 and 3,000 the recipient needs `nif` or `alternative_id`; use F1 whenever the buyer is a business, asks for an identified invoice, or IRPF applies; forbidden with IRPF, recargo de equivalencia, reverse charge (ISP) or cross-border/OSS (`SIMPLIFICADA_FORBIDS_IRPF`, `_SURCHARGE`, `_ISP`, `_CROSS_BORDER`).
 
 ### Correcting and voiding
 
@@ -97,6 +98,9 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
   - Codes: `R1` error fundado en derecho, returns, discounts; `R2` concurso (insolvency); `R3` bad debt (incobrable); `R4` any other cause; `R5` only for F2 simplified invoices (R1 to R4 are not allowed on F2).
 - `void($invoiceId, ...)`: `reason` of at least 10 characters, optional `void_date`. Only for invoices that should never have existed; the number is burned. BeeL sends the registro de anulación.
 - Data errors on an issued invoice are always fixed with a corrective, or by voiding and reissuing.
+- Correctives are numbered in the company's default corrective series (not the original's); without one: `422 SERIES_DEFAULT_NOT_FOUND`. Each corrective targets exactly one original; a second `TOTAL` is `409`. Only `ISSUED`, `SENT`, `PAID`, `OVERDUE` or `RECTIFIED` originals can be corrected or voided.
+- F2 to F1 (canje): R5 `TOTAL` on the F2, then a new `STANDARD` invoice. F3 is not supported.
+- Not supported (use the workaround): F3; autofactura and third-party issuance (each issuer uses its own BeeL account); standalone credit notes (always a corrective, R1 for returns/discounts); one corrective for several originals.
 
 ## VERI*FACTU status on an invoice
 
@@ -104,8 +108,11 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 - `submission_status`: `PENDING`, `ACCEPTED`, `REJECTED`, `VOIDED`, `NOT_SUBMITTED`. Only `REJECTED` requires action. Read `submission_status` before `error_code`, which can also be present on accepted-with-remarks submissions.
 - `enabled: false` means the NIF is outside the regime, not a failure. There is no per-invoice opt-out and no "submit now" endpoint.
 - Whether a company submits is taxpayer configuration (`verifactuConfiguration`, only `enabled` is writable; `nif_status` `ACTIVATED`/`DEACTIVATED`).
-- AEAT error `5104` means a broken chain: contact BeeL. Other common AEAT codes: `1101`, `3001`, `4101`, `4106`, `2001`.
-- Docs inconsistency, verify with BeeL before relying on it: one page says rejected submissions are retried automatically, another says subsanación is not automatic and must be requested from BeeL support.
+- `REJECTED` covers both an AEAT refusal (with `error_code`/`error_message`) and a submission BeeL gave up retrying (without them). Fix it with a corrective or void + reissue; there is no resubmit endpoint.
+- `NOT_SUBMITTED` right after issuing is transient (re-read); if it persists, contact BeeL (it@beel.es) with the invoice ids.
+- AEAT codes: `1101` issuing NIF not registered for VERI*FACTU, `3001` recipient NIF not in census (validate first), `4101` total mismatch, `4106` simplified over threshold (use F1), `5104` broken chain (contact BeeL), `2001` duplicate (no action).
+- Transient AEAT errors are retried by BeeL. Subsanación (resubmitting the unchanged record) only fixes causes external to the invoice data (issuing NIF not yet censado, representation unsigned); it has no public endpoint and is not automatic: ask BeeL support.
+- `skip_reason` is historical (per-invoice opt-outs that no longer exist); do not build logic on it.
 
 ## Series
 
@@ -128,20 +135,37 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 - Rates: `IVA` 0, 4, 5, 10, 21. `IGIC` (Canarias) 0, 3, 5, 7, 9.5, 15, 20. `IPSI` (Ceuta, Melilla) 0.5, 1, 2, 4, 8, 10. `OTHER`.
 - A 0 % line needs `exemption_reason` (`EXEMPT_ZERO_RATE_REQUIRES_REASON`); with a reason the rate must be 0 and there can be no recargo de equivalencia.
 - `exemption_reason` to AEAT code: `EXENTA_ART_20` E1, `EXENTA_ART_21` E2, `EXENTA_ART_22` E3, `EXENTA_ART_24` E4, `EXENTA_ART_25` E5 (needs `alternative_id.type = NIF_IVA`), `EXENTA_ART_26`/`EXENTA_ART_140` E6, `NO_SUJETA_ART_7_9` N1, `NO_SUJETA_LOCALIZACION` N2, `ISP_ART_84_2_A`/`_E`/`_F` S2 (reverse charge), `REGIMEN_ART_129`/`135`/`141`/`154`/`163_DECIES`, `OTRO` (needs `exemption_reason_text`). Omitted: S1 (subject and not exempt).
-- `regime_key`: `01` to `11`, `14`, `15`, `17` (OSS), `18` (recargo de equivalencia), `19`, `20`. `02` requires `EXENTA_ART_21`. Recargo requires `18`; a line with recargo and `01` is rewritten to `18`.
-- Recargo de equivalencia pairs: IVA 4 with 0.5, 5 with 0.625, 10 with 1.4, 21 with 5.2. Apply it only when the buyer has declared in writing that they are in the regime.
+- `regime_key` (inside `main_tax`, defaults to `01`): `01` general, `02` export, `03` REBU (used goods, art), `04` investment gold, `05` travel agencies, `06` VAT group, `07` criterio de caja (every invoice of an opted-in taxpayer), `08` mixed IPSI/IVA/IGIC, `09`, `10`, `11` business premises rental, `14`, `15`, `17` OSS/IOSS, `18` recargo de equivalencia, `19` REAGYP / Canarias art. 25 Ley 19/1994, `20` módulos. `12`, `13` and `16` are not accepted.
+- Cross-field rules BeeL enforces: `02` accepts only `EXENTA_ART_21` (`REGIME_REQUIRES_INCOMPATIBLE_EXEMPTION`); `18` requires `equivalence_surcharge_rate` (`REGIME_REQUIRES_SURCHARGE`) and a surcharge requires `18` (`SURCHARGE_REQUIRES_REGIME`, REBU `03` included); `17` with an `exemption_reason` is accepted but forces 0 % and drops the destination VAT, so never combine them; `ISP_*` with a surcharge is rejected (`ISP_INCOMPATIBLE_WITH_SURCHARGE`); `EXENTA_ART_25` requires a `NIF_IVA` recipient.
+- REBU (`03`): the taxable base is the margin: `unit_price` = margin / 1.21 (sale 3,000, cost 2,000: base 826.45, VAT 173.55); BeeL relaxes the totals reconciliation for `03`.
+- Territorial tax follows the place of supply, never the issuer's address: goods delivered or services used in the Canary Islands use `IGIC`, in Ceuta or Melilla `IPSI`, elsewhere in Spain `IVA`. Lines of one invoice may mix them. BeeL does not detect the place of supply.
+- ISP (`ISP_ART_84_2_*`, S2) is a domestic Spanish mechanism (construction subcontracting `_F`, scrap `_E`, non-established sellers `_A`); never use it for EU or non-EU customers.
+- Recargo de equivalencia pairs (strict): IVA 4 with 0.5, 5 with 0.625, 10 with 1.4, 21 with 5.2; `0` disables it on a line; 1.75 (tobacco) is not accepted. Apply it only when the buyer (a retailer) has declared in writing that they are in the regime, never inferred; it is per line (a transport fee on the same invoice stays `01`), never on exempt, not-subject or ISP lines, never on F2.
 - IRPF: `irpf_rate` in {0, 1, 2, 7, 15, 19, 24}. Omitted means the company default applies; send `0` to withhold nothing. Company tax configuration: `apply_irpf`, `default_irpf_rate`, `irpf_exempt`, `apply_equivalence_surcharge`, `default_main_tax`.
 - Pricing: exactly one of `unit_price` (4 decimals), `total_excluding_tax`, `total_including_tax` per line.
 - Suplidos (disbursements): `line_type: SUPLIDO` with `source_invoice_reference` (required) and no tax fields; they add to `total_disbursements`/`total_to_pay` and are outside VERI*FACTU.
-- Foreign recipients: `alternative_id{type, number, country_code}` with type `NIF_IVA`, `PASSPORT`, `COUNTRY_ID`, `RESIDENCE_CERTIFICATE`, `OTHER_DOCUMENT` (non-ES), or `NOT_REGISTERED` (ES only).
+- Foreign recipients never go in `recipient.nif` (Spanish NIFs only): use `alternative_id{type, number, country_code}` with type `NIF_IVA` (EU VAT-ID, VIES-validated), `PASSPORT` (any country, ES included), `COUNTRY_ID`, `RESIDENCE_CERTIFICATE`, `OTHER_DOCUMENT` (non-ES only), or `NOT_REGISTERED` (ES only); breaking the country rules is `422 ALTERNATIVE_ID_INVALID`. Numeric codes `02`-`07` are deprecated aliases.
+- BeeL validates `NIF_IVA` against VIES before submission and refuses the invoice if the VAT-ID is inactive: then identify the customer with `COUNTRY_ID`/`OTHER_DOCUMENT` and treat the sale as B2C.
 
-| Scenario | exemption_reason | regime_key |
-|---|---|---|
-| EU B2B goods | `EXENTA_ART_25` | `01` |
-| EU B2B services | `NO_SUJETA_LOCALIZACION` | `01` |
-| EU B2C via OSS | none | `17` |
-| Non-EU goods (export) | `EXENTA_ART_21` | `02` |
-| Non-EU services | `NO_SUJETA_LOCALIZACION` | `01` |
+### Classifying a line: who and where is the customer
+
+| Customer | Selling | `exemption_reason` | `regime_key` | `main_tax.percentage` | `alternative_id.type` |
+|---|---|---|---|---|---|
+| Spain, normal | anything | omit (S1) | `01` | 4/5/10/21 (IGIC/IPSI by place) | none (`nif`) |
+| Spain, reverse charge | construction, scrap, ... | `ISP_ART_84_2_F`/`_E`/`_A` (S2) | `01` | 0 | none (`nif`) |
+| Spain, exempt by law | education, health, ... | `EXENTA_ART_20` (E1) + `exemption_reason_text` | `01` | 0 | none (`nif`) |
+| Spain, not subject | samples, internal transfers | `NO_SUJETA_ART_7_9` (N1) | `01` | 0 | none (`nif`) |
+| EU business with valid VIES VAT-ID | goods | `EXENTA_ART_25` (E5) | `01` | 0 | `NIF_IVA` |
+| EU business with valid VIES VAT-ID | services | `NO_SUJETA_LOCALIZACION` (N2) | `01` | 0 | `NIF_IVA` |
+| EU consumer, seller under the OSS threshold | anything | omit (S1) | `01` | Spanish rate | `PASSPORT`/`COUNTRY_ID`/`OTHER_DOCUMENT` |
+| EU consumer, seller in OSS | anything | omit (regime `17` alone makes it N2) | `17` | destination country's rate (e.g. 19 DE) | `PASSPORT`/`COUNTRY_ID`/`OTHER_DOCUMENT` |
+| Outside the EU (B2B or B2C) | goods (export) | `EXENTA_ART_21` (E2) | `02` | 0 | `PASSPORT`/`COUNTRY_ID`/`OTHER_DOCUMENT` |
+| Outside the EU (B2B or B2C) | services | `NO_SUJETA_LOCALIZACION` (N2) | `01` | 0 | `PASSPORT`/`COUNTRY_ID`/`OTHER_DOCUMENT` |
+
+- Goods vs services is decided per line, not per customer: an EU business buying both gets E5 and N2 lines on the same invoice. Intra-EU B2B services are N2, never ISP/S2.
+- OSS threshold: 10,000 EUR per calendar year of cross-border B2C sales, aggregated across all EU countries (not per country or customer). Below it (and not opted in) bill Spanish VAT; once crossed or opted in, every cross-border B2C line of the year uses `17` with the destination rate, settled in Modelo 369. BeeL does not track the threshold: the app (or the taxpayer) must.
+- Exports: keep the customs evidence (DUA) with the invoice.
+- Any cross-border or foreign case needs `STANDARD` (F1): F2 is rejected for cross-border/OSS.
 
 Tax treatment is the taxpayer's legal responsibility: when a case is not clearly covered here, surface it to a human (or the taxpayer's gestor) instead of guessing.
 
@@ -152,6 +176,14 @@ Company-scoped CRUD, bulk (up to 500) and CSV import for customers; CRUD and bul
 ## Stripe payment connections
 
 Per company, via OAuth authorisation. Payments generate invoices automatically using BeeL's "Fiscal Mirror" rule (Stripe's amounts are mirrored, never recalculated). Events can be retried, drafted, resolved or discarded (`paymentConnections->events($id)`).
+
+- Stripe invoices have no fiscal validity: configure them as `PROFORMA-` with emails off so customers only get BeeL's.
+- IRPF is always 0 on Stripe-generated invoices; bill B2B clients who withhold through the API instead.
+- Without Stripe Tax, the total is decomposed with the company's default tax as inclusive ("Prices include tax" per connection).
+- F1 vs F2 per connection threshold (default 400, max 3,000 EUR); above it, NIF + address are required or the event is parked (`AMOUNT_REQUIRES_FISCAL_DATA`).
+- Refunds/credit notes become correctives: F2 originals always R5; `duplicate`/`fraudulent` R4; anything else R1. EUR only.
+- Goods vs services for cross-border classification comes from the Stripe product metadata or the connection default.
+- Connection settings (threshold, auto-invoicing, email, customer creation) are dashboard-only, no API.
 
 ## Webhooks
 
@@ -172,4 +204,4 @@ Per company, via OAuth authorisation. Payments generate invoices automatically u
 
 ## Sources
 
-https://docs.beel.es/llms.txt, https://docs.beel.es/llms-full.txt, https://docs.beel.es/api/openapi; pages `/verifactu`, `/verifactu/scope-and-limitations`, `/verifactu/invoice-types`, `/verifactu/cancel-and-fix`, `/verifactu/corrective-invoices`, `/verifactu/submission-states`, `/verifactu/tax-classification`, `/verifactu/international-customers`, `/auth`, `/guides/idempotency`, `/guides/handling-errors`, `/guides/rate-limits`, `/guides/sending-email`, `/multi-nif`, `/webhooks`, `/webhooks/retries`.
+https://docs.beel.es/llms.txt, https://docs.beel.es/llms-full.txt, https://docs.beel.es/api/openapi; pages `/verifactu`, `/verifactu/scope-and-limitations`, `/verifactu/invoice-types`, `/verifactu/cancel-and-fix`, `/verifactu/corrective-invoices`, `/verifactu/submission-states`, `/verifactu/tax-classification`, `/verifactu/international-customers`, `/verifactu/territorial-taxes`, `/verifactu/regime-keys`, `/verifactu/equivalence-surcharge`, `/verifactu/simplified-vs-standard`, `/verifactu/auto-submit`, `/verifactu/examples-cookbook`, `/guides/suplidos`, `/guides/glossary`, `/stripe/*`, `/auth`, `/guides/idempotency`, `/guides/handling-errors`, `/guides/rate-limits`, `/guides/sending-email`, `/multi-nif`, `/webhooks`, `/webhooks/retries`.

@@ -99,7 +99,8 @@ Event::listen(function (InvoicePdfGenerated $event): void {
 - **Invoice created by mistake that should never have existed**: `void()` with a reason of at least 10 characters. The number is not reused.
 - **Retail ticket-like sale**: simplified invoice (`SIMPLIFIED`, AEAT F2) up to 3,000 EUR including VAT, anonymous recipient only up to 400 EUR, never with IRPF, recargo de equivalencia, reverse charge or cross-border operations.
 - **Quote**: proforma (`PROFORMA`), non-fiscal and never sent to the AEAT; convert it with `convertToInvoice()`.
-- **Foreign customer**: still a VERI*FACTU invoice with QR; identify the recipient with `alternative_id` and pick the exemption and regime key from the table in `references/beel-api.md`.
+- **Foreign or cross-border customer**: still a VERI*FACTU invoice with QR, always `STANDARD`. Identify the recipient with `alternative_id` (never `nif`) and classify each line with the "Classifying a line" table in `references/beel-api.md`: EU business with VIES VAT-ID (goods E5, services N2), EU consumer (Spanish VAT under the 10,000 EUR OSS threshold, destination rate with regime `17` above it), outside the EU (goods E2 + regime `02`, services N2). An inactive VIES VAT-ID means B2C.
+- **Canarias, Ceuta, Melilla**: `IGIC` or `IPSI` when the operation happens there, whatever the issuer's address.
 
 ## Reference files
 

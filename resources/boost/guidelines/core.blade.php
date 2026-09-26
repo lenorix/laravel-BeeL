@@ -25,6 +25,17 @@ foreach ($company->customers->all() as $customer) {} // every page, lazily
 - Iterate lists with `all()`, not hand-written `page` loops.
 - Never implement VERI*FACTU yourself (hash chaining, registro XML, signing, AEAT calls): BeeL does it.
 - BeeL never recalculates amounts. Set every line's tax explicitly: `main_tax` (type, percentage, regime_key), an `exemption_reason` on 0 % lines, and `irpf_rate` `0` when nothing is withheld (omitted, it inherits the company default).
+- Classify every line by where the customer is and what is sold (the skill's table has the full rules):
+
+| Customer | Goods | Services |
+|---|---|---|
+| Spain | omit `exemption_reason`, rate > 0, regime `01` | same (ISP `ISP_ART_84_2_*` only for domestic reverse charge) |
+| EU business, valid VIES VAT-ID (`alternative_id.type` `NIF_IVA`) | `EXENTA_ART_25`, 0 %, `01` | `NO_SUJETA_LOCALIZACION`, 0 %, `01` |
+| EU consumer, seller under 10,000 EUR/year OSS | Spanish VAT, no reason, `01` | same |
+| EU consumer, seller in OSS | destination rate, regime `17`, never an `exemption_reason` | same |
+| Outside the EU | `EXENTA_ART_21`, 0 %, regime `02` | `NO_SUJETA_LOCALIZACION`, 0 %, `01` |
+
+- Foreign customers never use `recipient.nif`: identify them with `alternative_id` (`NIF_IVA` for EU businesses, else `PASSPORT`/`COUNTRY_ID`/`OTHER_DOCUMENT`), always on a `STANDARD` invoice. IGIC (Canarias) and IPSI (Ceuta, Melilla) follow the place of supply, not the issuer's address. Recargo de equivalencia only when the retailer declared it in writing (regime `18`). BeeL doesn't track the OSS threshold nor detect the place of supply: the app decides, and unclear cases go to a human.
 - `issue()` is irreversible and the AEAT submission is asynchronous: read `verifactu.submission_status` or handle `verifactu.status.updated`; only `REJECTED` needs action. Correct issued invoices with `createCorrective()` (R1 to R5); `void()` only an invoice that should never have existed.
 - Send an `Idempotency-Key` derived from your own domain id on create, issue, void and corrective calls: `$company->invoices->withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: 'invoice-issue-'.$id))->issue($id)`. Set `external_ref` when an invoice must exist once per order or payment.
 - Never store the 5-minute URL from `getPdf()`. Store the PDF with `$company->invoices->storePdf($id, $path, disk: 's3')`, or from the queue with `Lenorix\LaravelBeel\Jobs\StoreInvoicePdf::dispatch($id, $path, disk: 's3')`. Never download it with `file_get_contents()` or `Http::get()->body()`.
