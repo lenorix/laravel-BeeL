@@ -16,8 +16,12 @@ use League\Flysystem\InMemory\InMemoryFilesystemAdapter;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
+use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
+use Lenorix\LaravelBeel\Support\VerifiedDownloadStream;
 use Lenorix\LaravelBeel\Testing\BeelFake;
 use Psr\Http\Message\RequestInterface;
+
+mutates(SignedDownloadStorage::class, VerifiedDownloadStream::class);
 
 // storePdf() through real Flysystem adapters other than the local one. The S3 adapter runs the real
 // AWS SDK with an in-process handler instead of the network, so no request leaves the test.

@@ -1,0 +1,44 @@
+name: quality
+
+on:
+  push:
+    paths:
+      - '**.php'
+      - 'composer.json'
+      - '.github/workflows/quality.yml'
+  pull_request:
+    paths:
+      - '**.php'
+      - 'composer.json'
+      - '.github/workflows/quality.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage-and-mutation:
+    name: Coverage and mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: pcov
+
+      - name: Install composer dependencies
+        uses: ramsey/composer-install@26d8a556604053a9612623447203a691f406fbe6 # v4
+
+      # Fails when line coverage drops below the minimum.
+      - name: Coverage
+        run: vendor/bin/pest --coverage --min=95
+
+      # Mutation testing of the classes the tests declare with mutates() (download verification,
+      # webhook endpoint and dedupe, rate limiting, settings): fails when the score drops.
+      - name: Mutation testing
+        run: vendor/bin/pest --mutate --parallel --min=65

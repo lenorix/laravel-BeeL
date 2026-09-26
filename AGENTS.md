@@ -10,7 +10,7 @@ composer analyse    # PHPStan (level 10, src/ and config/)
 vendor/bin/pint     # code style; CI fails on a diff (`vendor/bin/pint --test`)
 ```
 
-Run all three before every commit. CI runs PHP 8.4 and 8.5 on Ubuntu and Windows, with prefer-lowest and prefer-stable. Files are checked out with LF on every OS (`.gitattributes`).
+Run all three before every commit. The `quality` workflow also enforces line coverage (`pest --coverage --min=95`) and a mutation score (`pest --mutate --min=65`) on the classes tests declare with `mutates()`; add `mutates()` to the tests of any new critical class, and check the score locally with `XDEBUG_MODE=coverage vendor/bin/pest --mutate --parallel`. CI runs PHP 8.4 and 8.5 on Ubuntu and Windows, with prefer-lowest and prefer-stable. Files are checked out with LF on every OS (`.gitattributes`).
 
 ## Hard rules
 

@@ -21,7 +21,12 @@ use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
+use Lenorix\LaravelBeel\Support\DocumentKind;
+use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
+use Lenorix\LaravelBeel\Support\VerifiedDownloadStream;
 use Lenorix\LaravelBeel\Testing\BeelFake;
+
+mutates(SignedDownloadStorage::class, VerifiedDownloadStream::class, DocumentKind::class);
 
 const PDF_URL = 'https://beel-pdfs.s3.eu-west-1.amazonaws.com/invoices/f47ac10b.pdf?X-Amz-Signature=fake';
 
@@ -289,6 +294,7 @@ it('overwrites on disks that refuse to rename onto an existing file, like SFTP',
         $config,
     ));
     config()->set('filesystems.disks.sftp-like', ['driver' => 'strict-rename', 'root' => storage_path('framework/testing/disks/sftp-like')]);
+    Storage::disk('sftp-like')->deleteDirectory('');
     Storage::disk('sftp-like')->put('a.pdf', 'previous');
     fakePdfDownloads(BeelFake::pdf('%PDF-new'));
 
@@ -308,4 +314,72 @@ it('never applies BeeL-only settings from beel.http.options to the download', fu
 
     Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), '/invoices/inv-1/pdf') && $r->hasHeader('X-Beel-Only'));
     Http::assertSent(fn (ClientRequest $r) => $r->url() === PDF_URL && ! $r->hasHeader('X-Beel-Only'));
+});
+
+it('retries timeouts, rate limits and every 5xx, but not other 4xx', function (int $status, bool $retried) {
+    fakePdfDownloads(fn () => Http::response('', $status), BeelFake::pdf());
+
+    $store = fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices');
+    $retried ? $store() : expect($store)->toThrow(DocumentDownloadFailed::class, "HTTP {$status}");
+
+    expect(pdfUrlRequests())->toBe($retried ? 2 : 1);
+})->with([
+    'expired URL' => [403, true],
+    'timeout' => [408, true],
+    'rate limited' => [429, true],
+    'first 5xx' => [500, true],
+    'not found' => [404, false],
+    'last 4xx' => [499, false],
+]);
+
+it('rejects a body shorter than the file signature', function () {
+    fakePdfDownloads(...array_fill(0, 3, fn () => Http::response('%PD', 200)));
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
+        ->toThrow(DocumentDownloadFailed::class, 'not a PDF');
+});
+
+it('recognises the signature when it arrives split across small reads', function () {
+    fakePdfDownloads(function () {
+        $chunks = ['%P', 'DF', '-1', '.7'];
+
+        return Create::promiseFor(new PsrResponse(200, ['Content-Length' => '8'], new PumpStream(function () use (&$chunks) {
+            return array_shift($chunks) ?? false;
+        })));
+    });
+
+    app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices');
+
+    expect(Storage::disk('invoices')->get('a.pdf'))->toBe('%PDF-1.7');
+});
+
+it('keeps even the URL without its signature out of error messages', function () {
+    $base = strtok(PDF_URL, '?');
+    fakePdfDownloads(...array_fill(0, 3, fn () => throw new ConnectionException("Could not resolve {$base}")));
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
+        ->toThrow(fn (DocumentDownloadFailed $e) => expect($e->getMessage())->not->toContain('beel-pdfs.s3')->toContain('[pre-signed URL]'));
+});
+
+it('does not delete anything when a move fails without overwrite', function () {
+    Storage::extend('refusing-move', fn ($app, array $config) => new FilesystemAdapter(
+        new Filesystem($adapter = new class($config['root']) extends LocalFilesystemAdapter
+        {
+            public function move(string $source, string $destination, Config $config): void
+            {
+                throw UnableToMoveFile::fromLocationTo($source, $destination);
+            }
+        }),
+        $adapter,
+        $config,
+    ));
+    config()->set('filesystems.disks.refusing', ['driver' => 'refusing-move', 'root' => storage_path('framework/testing/disks/refusing')]);
+    Storage::disk('refusing')->deleteDirectory('');
+    fakePdfDownloads(...array_fill(0, 3, fn () => BeelFake::pdf()));
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'refusing'))
+        ->toThrow(DocumentDownloadFailed::class, 'Unable to move');
+
+    expect(Storage::disk('refusing')->allFiles())->toBe([]);
+    Storage::disk('refusing')->deleteDirectory('');
 });

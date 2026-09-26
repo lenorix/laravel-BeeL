@@ -7,6 +7,7 @@ use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 use Lenorix\LaravelBeel\Events\Webhooks\BeelWebhookEvent;
 use Lenorix\LaravelBeel\Events\Webhooks\InvoicePdfGenerated;
 use Lenorix\LaravelBeel\Events\Webhooks\VerifactuStatusUpdated;
+use Lenorix\LaravelBeel\Testing\BeelFake;
 use Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks;
 
 uses(InteractsWithBeelWebhooks::class);
@@ -75,3 +76,11 @@ it('says so when an event\'s data is not the model its type promises', function 
 
     expect(fn () => $event->data())->toThrow(UnexpectedValueException::class, 'evt-9 (invoice.issued)');
 });
+
+it('gives every event type its typed data', function (WebhookEventType $type) {
+    $payload = ['id' => 'evt-1', 'type' => $type->value, 'created_at' => '2025-01-20T10:30:00Z', 'api_version' => '2025-01', 'livemode' => false, 'data' => BeelFake::webhookData($type->value)];
+    $event = BeelWebhookEvent::for(new BeelWebhookReceived('evt-1', $type->value, $payload['data'], $payload));
+
+    expect($event)->not->toBeNull()
+        ->and(class_basename($event->data()))->toStartWith('WebhookEventData');
+})->with(WebhookEventType::cases());

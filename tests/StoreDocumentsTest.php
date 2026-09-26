@@ -8,7 +8,12 @@ use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
+use Lenorix\LaravelBeel\Support\DocumentKind;
+use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
+use Lenorix\LaravelBeel\Support\VerifiedDownloadStream;
 use Lenorix\LaravelBeel\Testing\BeelFake;
+
+mutates(SignedDownloadStorage::class, VerifiedDownloadStream::class, DocumentKind::class);
 
 beforeEach(function () {
     config()->set('services.beel.key', 'beel_sk_test_fake');

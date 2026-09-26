@@ -4,6 +4,8 @@ use Illuminate\Support\Facades\RateLimiter;
 use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
 use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 
+mutates(ThrottleBeelRequests::class);
+
 /** A job double that records whether it ran or was released, and for how long. */
 function throttledJob(): object
 {
@@ -72,4 +74,40 @@ it('is used by StoreInvoicePdf, which counts only exceptions as failures', funct
         ->and($job->tries)->toBe(0)
         ->and($job->maxExceptions)->toBe(5)
         ->and($job->retryUntil())->toBeInstanceOf(DateTimeInterface::class);
+});
+
+it('allows 250 requests per minute per key by default', function () {
+    $beel = config('beel');
+    unset($beel['queue_rate_limit']);
+    config()->set('beel', $beel);
+
+    expect(runThrottled(new ThrottleBeelRequests(requests: 250))->ran)->toBeTrue()
+        ->and(runThrottled(new ThrottleBeelRequests)->ran)->toBeFalse();
+});
+
+it('honours a budget of a single request per minute', function () {
+    config()->set('beel.queue_rate_limit', 1);
+
+    expect(runThrottled(new ThrottleBeelRequests)->ran)->toBeTrue()
+        ->and(runThrottled(new ThrottleBeelRequests)->ran)->toBeFalse();
+});
+
+it('shares the default key\'s budget with jobs that name that same key', function () {
+    runThrottled(new ThrottleBeelRequests(requests: 3)); // the CredentialsResolver's key
+
+    expect(runThrottled(new ThrottleBeelRequests('beel_sk_test_default'))->ran)->toBeFalse();
+});
+
+it('counts a job as at least one request', function () {
+    runThrottled(new ThrottleBeelRequests(requests: 0));
+    runThrottled(new ThrottleBeelRequests(requests: 0));
+    runThrottled(new ThrottleBeelRequests(requests: 0));
+
+    expect(runThrottled(new ThrottleBeelRequests)->ran)->toBeFalse();
+});
+
+it('releases a job until the window resets, not for a single second', function () {
+    runThrottled(new ThrottleBeelRequests(requests: 3));
+
+    expect(runThrottled(new ThrottleBeelRequests)->releasedFor)->toBeGreaterThan(50);
 });

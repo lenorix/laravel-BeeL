@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
 use Lenorix\BeelSdk\Builder\CustomerBuilder;
 use Lenorix\BeelSdk\Exception\BeelValidationError;
+use Lenorix\BeelSdk\Generated\Model\CreateCorrectiveInvoiceRequest;
+use Lenorix\BeelSdk\Generated\Model\VoidInvoiceRequest;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\LaravelClientException;
@@ -100,4 +102,22 @@ it('lets unfaked requests fall through to stray request prevention', function ()
     BeelFake::api()->listCustomers()->fake();
 
     expect(fn () => app(BeelManager::class)->company()->products->list())->toThrow(LaravelClientException::class, 'without a matching fake');
+});
+
+it('fakes voiding, correcting, sending and product operations', function () {
+    BeelFake::api()
+        ->voidInvoice(BeelFake::invoice(['status' => 'VOIDED']))
+        ->createCorrectiveInvoice(BeelFake::invoice(['id' => 'inv-r', 'type' => 'CORRECTIVE']))
+        ->sendInvoice()
+        ->listProducts([['id' => 'p-1', 'name' => 'Consultoría', 'default_price' => 100]])
+        ->fake();
+    $company = app(BeelManager::class)->company();
+
+    expect($company->invoices->void('inv-1', (new VoidInvoiceRequest)->setReason('Issued by mistake to the wrong customer'))->getStatus())->toBe('VOIDED')
+        ->and($company->invoices->createCorrective('inv-1', (new CreateCorrectiveInvoiceRequest)->setRectificationType('TOTAL')->setRectificationCode('R1')->setReason('Cancelled before delivery'))->getId())->toBe('inv-r');
+    $company->invoices->send('inv-1');
+
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/invoices/inv-1/send'));
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/invoices/inv-1/corrective'));
+    expect(Http::get('https://app.beel.es/api/v1/companies/company-1/products')->json('data.products.0.id'))->toBe('p-1');
 });

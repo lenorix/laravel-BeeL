@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
+use Lenorix\LaravelBeel\Http\Controllers\BeelWebhookController;
+use Lenorix\LaravelBeel\Http\Controllers\WebhookClaim;
+
+mutates(BeelWebhookController::class, WebhookClaim::class);
 
 function signBeelPayload(array $payload, string $secret, ?int $timestamp = null): string
 {
@@ -131,14 +135,20 @@ it('responds 503 when no webhook secret is configured', function () {
     $response->assertStatus(503);
 });
 
-it('rejects a valid signature over a payload missing id, type, or data', function () {
-    $payload = ['foo' => 'bar'];
+it('rejects a valid signature over a payload with a wrong id, type or data', function (array $payload) {
+    Event::fake();
     $signature = signBeelPayload($payload, 'test-webhook-secret');
 
-    $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(400);
 
-    $response->assertStatus(400);
-});
+    Event::assertNotDispatched(BeelWebhookReceived::class);
+})->with([
+    'nothing' => [['foo' => 'bar']],
+    'no id' => [['type' => 'invoice.issued', 'data' => []]],
+    'numeric id' => [['id' => 1, 'type' => 'invoice.issued', 'data' => []]],
+    'no type' => [['id' => 'evt-1', 'data' => []]],
+    'data not an object' => [['id' => 'evt-1', 'type' => 'invoice.issued', 'data' => 'x']],
+]);
 
 it('registers the beel.webhook route by default', function () {
     expect(Route::has('beel.webhook'))->toBeTrue();

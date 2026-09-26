@@ -3,6 +3,8 @@
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Support\Settings;
 
+mutates(Settings::class);
+
 it('reads numbers from config values and env strings', function () {
     config()->set('beel.test.int', '30');
     config()->set('beel.test.float', '2.5');
