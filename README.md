@@ -304,6 +304,30 @@ A tenant-aware `CredentialsResolver` (one that reads the current request or auth
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly.
 
+## Testing your integration
+
+Never let tests reach the real BeeL API: all SDK traffic goes through Laravel's HTTP client, so `Http::fake()` and `Http::preventStrayRequests()` cover it.
+
+To test your webhook listeners end to end, use the `InteractsWithBeelWebhooks` trait. It posts a correctly signed delivery (a fresh event id per call, the exact bytes it signs) to the package's endpoint:
+
+```php
+use Illuminate\Support\Facades\Queue;
+use Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks;
+
+uses(InteractsWithBeelWebhooks::class); // or `use InteractsWithBeelWebhooks;` in a PHPUnit TestCase
+
+it('queues a VERI*FACTU sync when BeeL reports a status change', function () {
+    Queue::fake();
+
+    $this->postBeelWebhook('verifactu.status.updated', ['new_status' => 'ACCEPTED'], ['company_id' => 'company-uuid'])
+        ->assertStatus(202);
+
+    Queue::assertPushed(SyncVerifactuStatus::class);
+});
+```
+
+`postBeelWebhook($type, $data, $overrides, $webhookKey, $secret)` signs with `services.beel.webhook_secret` unless you pass a secret; `$overrides` sets envelope fields such as `id`, `company_id` or `test`. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` returns the `BeeL-Signature` header value for the exact body you send.
+
 ## AI guidelines (Laravel Boost)
 
 The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and a `beel-invoicing` skill for AI coding agents. They cover this package, the `lenorix/beel-sdk` API (which, as a transitive dependency, can't ship its own), BeeL's API behaviour, and the VERI*FACTU rules an app still has to respect, plus what is out of scope (B2B e-invoicing, TicketBAI, SII). Run `php artisan boost:install` (or `boost:update --discover` if Boost is already installed) to pick them up.

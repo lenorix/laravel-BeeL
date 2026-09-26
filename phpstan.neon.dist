@@ -7,3 +7,8 @@ parameters:
         - src
         - config
     tmpDir: build/phpstan
+    ignoreErrors:
+        # Public test helper for consuming apps; the package's own tests use it, but PHPStan only analyses src/.
+        -
+            identifier: trait.unused
+            path: src/Testing/InteractsWithBeelWebhooks.php

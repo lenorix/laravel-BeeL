@@ -149,14 +149,18 @@ class SyncVerifactuStatus implements ShouldQueue
 - `Http::preventStrayRequests()` in the base test case and `Http::fake([...])` per test. Fake BeeL's envelope: `Http::response(['data' => [...]], 200)`.
 - Assert outgoing calls with `Http::assertSent(fn (Illuminate\Http\Client\Request $r) => $r->hasHeader('Authorization', 'Bearer ...') && str_contains($r->url(), $companyId))`.
 - Simulate transport failures with `Http::fake(fn () => throw new GuzzleHttp\Exception\ConnectException('...', new GuzzleHttp\Psr7\Request('GET', 'https://example.test')))`.
-- Signed webhook requests:
+- Signed webhook requests: use the package's test helpers instead of signing by hand.
 
 ```php
-$payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['invoice_id' => 'inv_1']];
-$t = time();
-$signature = 't='.$t.',v1='.hash_hmac('sha256', $t.'.'.json_encode($payload), config('services.beel.webhook_secret'));
+use Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks;
+use Lenorix\LaravelBeel\Testing\WebhookSignature;
 
-$this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+uses(InteractsWithBeelWebhooks::class);
+
+// Signed with services.beel.webhook_secret, fresh event id per call (so the package's dedupe
+// doesn't swallow a second post); $overrides sets envelope fields; optional webhook key and secret.
+$this->postBeelWebhook('invoice.issued', ['invoice_id' => 'inv_1'], ['company_id' => $companyId])->assertStatus(202);
+
+// Hand-built request: sign the exact raw body you send.
+$header = WebhookSignature::sign($rawBody, $secret);
 ```
-
-`postJson()` encodes with plain `json_encode($payload)`, so the signature matches the body sent.

@@ -46,7 +46,7 @@ $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoi
 ### Testing
 
 - Tests must never reach the real BeeL API. All SDK traffic goes through Laravel's HTTP client, so use `Http::fake()` and `Http::preventStrayRequests()`.
-- To test webhooks, sign the exact raw JSON you post: header `t=<unix time>,v1=` followed by `hash_hmac('sha256', "<t>.<raw json>", $secret)`.
+- To test webhook listeners, use the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait: `$this->postBeelWebhook('invoice.issued', $data, $overrides)` posts a correctly signed delivery with a fresh event id. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` signs the exact body you send.
 
 ### Not covered by BeeL or this package
 
