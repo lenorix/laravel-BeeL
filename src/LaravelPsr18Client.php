@@ -6,9 +6,7 @@ namespace Lenorix\LaravelBeel;
 
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
-use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
-use Psr\Http\Client\NetworkExceptionInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -38,26 +36,5 @@ final class LaravelPsr18Client implements ClientInterface
         // string, and the stream a binary endpoint needs. (The SDK's generated deserializers still
         // read JSON bodies into a string, which is fine for JSON.)
         return $response->toPsrResponse();
-    }
-}
-
-final class LaravelClientException extends \RuntimeException implements ClientExceptionInterface
-{
-    public function __construct(string $message, ?\Throwable $previous = null)
-    {
-        parent::__construct($message, 0, $previous);
-    }
-}
-
-final class LaravelNetworkException extends \RuntimeException implements NetworkExceptionInterface
-{
-    public function __construct(string $message, private RequestInterface $request, ?\Throwable $previous = null)
-    {
-        parent::__construct($message, 0, $previous);
-    }
-
-    public function getRequest(): RequestInterface
-    {
-        return $this->request;
     }
 }
