@@ -51,4 +51,15 @@ final class BeelManager
 
         return new BeelCompany($this->client($apiKey), $companyId);
     }
+
+    public function account(?string $apiKey = null, ?string $accountId = null): BeelAccount
+    {
+        $accountId ??= $this->config->get('services.beel.account_id');
+
+        if (! is_string($accountId) || trim($accountId) === '') {
+            throw new \InvalidArgumentException('Set services.beel.account_id or pass an account UUID.');
+        }
+
+        return new BeelAccount($this->client($apiKey), $accountId);
+    }
 }

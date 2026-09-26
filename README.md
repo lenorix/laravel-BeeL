@@ -14,6 +14,8 @@ Add the BeeL API settings to `config/services.php`:
 'beel' => [
     'key' => env('BEEL_API_KEY'),
     'company_id' => env('BEEL_COMPANY_ID'),
+    // Optional: only needed if you use BeelManager::account().
+    'account_id' => env('BEEL_ACCOUNT_ID'),
     'base_url' => env('BEEL_BASE_URL', 'https://app.beel.es/api'),
     'webhook_secret' => env('BEEL_WEBHOOK_SECRET'),
 ],
@@ -64,7 +66,7 @@ The manager creates a fresh SDK client each time `client()` is called and does n
 $beel = app(BeelManager::class)->client(apiKey: $customApiKey);
 ```
 
-Company scopes expose the SDK's resource objects directly, plus `scope` (the original SDK scope) and `raw` (the generated client for endpoints not covered by resource wrappers). `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
+Company and account scopes expose the SDK's resource objects directly, plus `scope` (the original SDK scope) and `raw` (the generated client for endpoints not covered by resource wrappers). `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
 
 Both `client()` and `company()` also accept credentials resolved at runtime instead of read from config — useful for multi-tenant apps, but not limited to that case:
 
@@ -74,6 +76,15 @@ $company = app(BeelManager::class)->company(
     companyId: $tenant->beel_company_id,
 );
 ```
+
+Account-level resources (members, invitations, managed companies, account webhooks, email delivery history) work the same way, through `account()`:
+
+```php
+$account = app(BeelManager::class)->account();
+$account->members->list();
+```
+
+`client()`'s unscoped resources — `catalogs` (shared catalogs), `nif` (AEAT NIF validation), and `accounts` (listing/provisioning accounts) — aren't tied to a company or account UUID, so there's no wrapper for them; use them directly off the client returned by `client()`, e.g. `$beel->catalogs->taxTypes()`.
 
 ## Laravel HTTP client
 

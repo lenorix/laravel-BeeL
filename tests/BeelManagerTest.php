@@ -3,12 +3,14 @@
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Http;
 use Lenorix\BeelSdk\Beel;
+use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelCompany;
 use Lenorix\LaravelBeel\BeelManager;
 
 beforeEach(function () {
     config()->set('services.beel.key', 'config-api-key');
     config()->set('services.beel.company_id', 'config-company-id');
+    config()->set('services.beel.account_id', 'config-account-id');
     config()->set('services.beel.base_url', 'https://config.example.test/api');
 });
 
@@ -75,3 +77,37 @@ it('throws when no company id is configured or provided', function () {
 
     app(BeelManager::class)->company();
 })->throws(InvalidArgumentException::class, 'Set services.beel.company_id or pass a tenant company UUID.');
+
+it('creates an account scope using the configured account id', function () {
+    $account = app(BeelManager::class)->account();
+
+    expect($account)->toBeInstanceOf(BeelAccount::class)
+        ->and($account->accountId)->toBe('config-account-id');
+});
+
+it('lets an explicit account id override the configured one', function () {
+    $account = app(BeelManager::class)->account(accountId: 'explicit-account-id');
+
+    expect($account->accountId)->toBe('explicit-account-id');
+});
+
+it('combines an explicit api key with the configured account id', function () {
+    Http::fake(['config.example.test/*' => Http::response(['data' => ['id' => 'config-account-id']], 200)]);
+
+    $account = app(BeelManager::class)->account(apiKey: 'explicit-api-key');
+
+    expect($account->accountId)->toBe('config-account-id');
+
+    $account->get();
+
+    Http::assertSent(function (ClientRequest $request) {
+        return $request->hasHeader('Authorization', 'Bearer explicit-api-key')
+            && str_contains($request->url(), 'config-account-id');
+    });
+});
+
+it('throws when no account id is configured or provided', function () {
+    config()->set('services.beel.account_id', null);
+
+    app(BeelManager::class)->account();
+})->throws(InvalidArgumentException::class, 'Set services.beel.account_id or pass an account UUID.');
