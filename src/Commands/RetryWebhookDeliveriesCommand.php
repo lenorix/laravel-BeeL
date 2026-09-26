@@ -43,8 +43,8 @@ final class RetryWebhookDeliveriesCommand extends Command
     {
         try {
             $account = $manager->account(
-                apiKey: $this->stringOption('api-key') ?? $this->stringConfig('beel.webhook_delivery_retry.api_key'),
-                accountId: $this->stringOption('account-id') ?? $this->stringConfig('beel.webhook_delivery_retry.account_id'),
+                apiKey: $this->stringOption('api-key'),
+                accountId: $this->stringOption('account-id'),
             );
         } catch (\InvalidArgumentException $exception) {
             $this->error($exception->getMessage());
@@ -250,13 +250,6 @@ final class RetryWebhookDeliveriesCommand extends Command
         } while ($result->getPagination()->getHasNext());
 
         return $items;
-    }
-
-    private function stringConfig(string $key): ?string
-    {
-        $value = config($key);
-
-        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private function stringOption(string $name): ?string

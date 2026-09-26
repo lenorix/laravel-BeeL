@@ -185,18 +185,18 @@ it('leaves events alone while BeeL may still be retrying them automatically', fu
     expect(retriedDeliveryIds())->toBe(['settled']);
 });
 
-it('uses the dedicated retry credentials from config instead of the app key', function () {
-    config()->set('services.beel.account_id', null);
-    config()->set('beel.webhook_delivery_retry.account_id', 'acc-1');
-    config()->set('beel.webhook_delivery_retry.api_key', 'beel_sk_test_webhooks_write');
+it('uses the account and key given as options instead of services.beel', function () {
+    config()->set('services.beel.account_id', 'other-account');
 
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5)]]]);
 
-    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+    $this->artisan('beel:retry-webhook-deliveries', ['--account-id' => 'acc-1', '--api-key' => 'beel_sk_test_tenant'])
+        ->assertSuccessful();
 
     expect(retriedDeliveryIds())->toBe(['d1']);
     Http::assertSent(fn (ClientRequest $request) => $request->method() === 'POST'
-        && $request->hasHeader('Authorization', 'Bearer beel_sk_test_webhooks_write'));
+        && str_contains($request->url(), '/accounts/acc-1/')
+        && $request->hasHeader('Authorization', 'Bearer beel_sk_test_tenant'));
 });
 
 it('keeps going when a notification listener throws', function () {

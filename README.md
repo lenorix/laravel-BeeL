@@ -144,7 +144,7 @@ BeeL retries a failed delivery only 5 times over about 75 seconds, and not at al
 - Subscriptions BeeL has deactivated (it pauses them after 25 consecutive failures over more than 48 hours) are not retried: the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`), so the app decides how to notify or react.
 - The command exits with a failure code when something was given up, a retry was rejected, or a subscription is inactive, so the scheduler or your monitoring notices.
 
-Credentials: listing subscriptions and deliveries needs the `webhooks:read` scope and retrying needs `webhooks:write`. To keep `webhooks:write` off the app's main key, set a dedicated `api_key` (and `account_id`) under `webhook_delivery_retry` in the published `config/beel.php`, for example with `env('BEEL_WEBHOOK_RETRY_API_KEY')`; otherwise it uses `services.beel.key` and `services.beel.account_id`.
+It uses `services.beel.key` and `services.beel.account_id` (or `--api-key` / `--account-id`). **If you use this command, create the API key with the `webhooks:read` and `webhooks:write` scopes**: listing subscriptions and deliveries needs the first, asking BeeL to retry needs the second. BeeL fixes a key's scopes at creation, so a key without them answers 403.
 
 Options: `--account-id=`, `--api-key=`, `--webhook-id=` (repeatable), `--max-age=` (minutes), `--max-attempts=`, `--dry-run`.
 

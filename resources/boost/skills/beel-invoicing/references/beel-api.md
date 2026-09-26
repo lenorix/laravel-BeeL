@@ -13,7 +13,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 ## Authentication and environments
 
 - `Authorization: Bearer beel_sk_...`. `beel_sk_test_` keys are sandbox (no real AEAT; test NIFs go to the AEAT test environment), `beel_sk_live_` keys are production. Same base URL, `https://app.beel.es/api` with `/v1/...` paths.
-- Keys are shown once, never expire, and their scopes are fixed at creation. `accounts:read`/`accounts:write` are granted only by BeeL. Keep `webhooks:write` (it can rotate the secret) on a separate key.
+- Keys are shown once, never expire, and their scopes are fixed at creation. `accounts:read`/`accounts:write` are granted only by BeeL. Grant only the scopes the app's features use: `webhooks:read` and `webhooks:write` are needed by `beel:retry-webhook-deliveries`; note `webhooks:write` can also rotate the webhook secret.
 - A managed account's `access_level` caps what a key can do regardless of its scopes.
 - `401 UNAUTHORIZED` / `INVALID_API_KEY`: the key. `403 FORBIDDEN` / `INSUFFICIENT_SCOPE`: see `details.missing_scopes`.
 - A 404 is deliberately ambiguous: wrong environment or no access.
