@@ -49,7 +49,8 @@ return [
     // room for web requests. 0 or null disables the throttle.
     'queue_rate_limit' => 250,
     'http' => [
-        // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries.
+        // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries. Set retries to 0
+        // to disable them (null means the default).
         'timeout' => 30,
         'connect_timeout' => 10,
         'retries' => 3,

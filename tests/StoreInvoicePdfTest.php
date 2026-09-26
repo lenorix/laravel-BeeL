@@ -8,6 +8,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Sleep;
@@ -55,6 +56,15 @@ function fakePdfDownloads(mixed ...$downloads): void
 function pdfUrlRequests(): int
 {
     return Http::recorded(fn (ClientRequest $r) => str_contains($r->url(), '/invoices/inv-1/pdf'))->count();
+}
+
+/** A directory of its own for a hand-built disk, so parallel runs never share files; removed after the test. */
+function uniqueTestRoot(): string
+{
+    $root = sys_get_temp_dir().'/beel-test-'.bin2hex(random_bytes(8));
+    test()->beforeApplicationDestroyed(fn () => File::deleteDirectory($root));
+
+    return $root;
 }
 
 /** Files left in the fake disk, temporary ones included. */
@@ -293,8 +303,7 @@ it('overwrites on disks that refuse to rename onto an existing file, like SFTP',
         $adapter,
         $config,
     ));
-    config()->set('filesystems.disks.sftp-like', ['driver' => 'strict-rename', 'root' => storage_path('framework/testing/disks/sftp-like')]);
-    Storage::disk('sftp-like')->deleteDirectory('');
+    config()->set('filesystems.disks.sftp-like', ['driver' => 'strict-rename', 'root' => uniqueTestRoot()]);
     Storage::disk('sftp-like')->put('a.pdf', 'previous');
     fakePdfDownloads(BeelFake::pdf('%PDF-new'));
 
@@ -303,7 +312,6 @@ it('overwrites on disks that refuse to rename onto an existing file, like SFTP',
     expect(Storage::disk('sftp-like')->get('a.pdf'))->toBe('%PDF-new')
         ->and(Storage::disk('sftp-like')->allFiles())->toBe(['a.pdf'])
         ->and(pdfUrlRequests())->toBe(1);
-    Storage::disk('sftp-like')->deleteDirectory('');
 });
 
 it('never applies BeeL-only settings from beel.http.options to the download', function () {
@@ -373,13 +381,11 @@ it('does not delete anything when a move fails without overwrite', function () {
         $adapter,
         $config,
     ));
-    config()->set('filesystems.disks.refusing', ['driver' => 'refusing-move', 'root' => storage_path('framework/testing/disks/refusing')]);
-    Storage::disk('refusing')->deleteDirectory('');
+    config()->set('filesystems.disks.refusing', ['driver' => 'refusing-move', 'root' => uniqueTestRoot()]);
     fakePdfDownloads(...array_fill(0, 3, fn () => BeelFake::pdf()));
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'refusing'))
         ->toThrow(DocumentDownloadFailed::class, 'Unable to move');
 
     expect(Storage::disk('refusing')->allFiles())->toBe([]);
-    Storage::disk('refusing')->deleteDirectory('');
 });
