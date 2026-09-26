@@ -144,4 +144,4 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 
 ## License
 
-MIT. See [LICENSE.md](LICENSE.md).
+Released into the public domain under [The Unlicense](https://unlicense.org/). See [LICENSE.md](LICENSE.md).
