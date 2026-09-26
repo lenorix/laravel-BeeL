@@ -50,6 +50,12 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 - Account resources: `companies`, `members`, `invitations`, `webhooks`, `emails`.
 - Resources that are not tied to a company or account (`catalogs`, `nif`, `accounts`) are used directly from `client()`: `$beel->nif->validate($nif)`, `$beel->catalogs->taxTypes()`.
 
+## Diagnosis
+
+`php artisan beel:check` is read-only (GET requests only, no test deliveries) and reports: API key presence and sandbox/live vs `APP_ENV`; `GET /v1/me/identity` (account, environment, and the key's scopes, which that endpoint returns without needing any scope) vs `services.beel.account_id`; the default company's `issuingReadiness()` blockers; missing `webhooks:read`/`webhooks:write`; whether an active HTTPS subscription points at `APP_URL` + `webhook_path` (per-tenant sub-paths count); the webhook secret (default resolver only); and the dedupe store (`array`/`null` error, `file` warning). Errors exit 1, warnings exit 0.
+
+`BeelCompany` forwards `get()`, `update()`, `delete()`, `fiscalSummary()` and `issuingReadiness()` to the SDK scope, and `BeelAccount` forwards `get()`, `usage()`, `changeAccessLevel()`, `createClaimToken()`, `setOwner()` and `endManagement()`; both are annotated with `@method` for IDEs and static analysis.
+
 ## Transport, retries and idempotency
 
 - The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx. On a 429 it waits the numeric-seconds `Retry-After` value (capped at 60s, BeeL's rate-limit window), falling back to `retry_delay_ms` when the header is absent or not that form. If retries are exhausted or disabled, handle `BeelRateLimitError::$retryAfterSeconds` yourself for longer waits.

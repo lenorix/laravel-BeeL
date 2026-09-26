@@ -6,6 +6,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
+use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
@@ -20,7 +21,8 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
         $package->name('laravel-beel')
             ->hasConfigFile()
             ->hasRoutes('beel')
-            ->hasCommand(RetryWebhookDeliveriesCommand::class);
+            ->hasCommand(RetryWebhookDeliveriesCommand::class)
+            ->hasCommand(CheckCommand::class);
     }
 
     public function packageRegistered(): void

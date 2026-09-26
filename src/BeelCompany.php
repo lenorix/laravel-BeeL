@@ -27,6 +27,12 @@ use Lenorix\BeelSdk\Resource\CompanyScope;
  * @property-read CompanyPaymentConnectionsResource $paymentConnections
  * @property-read CompanyTaxConfigurationResource $taxConfiguration
  * @property-read CompanyVeriFactuConfigurationResource $verifactuConfiguration
+ *
+ * @method \Lenorix\BeelSdk\Generated\Model\CompanyData get()
+ * @method \Lenorix\BeelSdk\Generated\Model\CompanyData update(\Lenorix\BeelSdk\Generated\Model\UpdateCompanyRequest $request)
+ * @method mixed delete()
+ * @method \Lenorix\BeelSdk\Generated\Model\FiscalSummaryResponse fiscalSummary(array<string, mixed> $query = [])
+ * @method \Lenorix\BeelSdk\Generated\Model\IssuingReadinessData issuingReadiness()
  */
 final class BeelCompany
 {

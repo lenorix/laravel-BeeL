@@ -119,6 +119,20 @@ $account->members->list();
 
 `client()`'s unscoped resources — `catalogs` (shared catalogs), `nif` (AEAT NIF validation), and `accounts` (listing/provisioning accounts) — aren't tied to a company or account UUID, so there's no wrapper for them; use them directly off the client returned by `client()`, e.g. `$beel->catalogs->taxTypes()`.
 
+## Checking your setup
+
+`php artisan beel:check` diagnoses the configuration in one go. It is read-only: it only sends GET requests to BeeL and never changes anything there (no test deliveries either). It reports:
+
+- whether an API key is available, and whether a sandbox key runs in production or a live key outside it;
+- whether BeeL accepts the key, which account and environment it belongs to, and whether that matches `services.beel.account_id`;
+- whether the default company can issue invoices (`issuingReadiness()`), listing the blockers if not;
+- whether the key has the `webhooks:read` / `webhooks:write` scopes the retry command needs (read from BeeL's identity endpoint, no write attempted);
+- whether a BeeL webhook subscription points at this app (`APP_URL` + the webhook path; per-tenant URLs under it count), is active, and uses HTTPS;
+- whether a webhook secret is configured (with the default resolver);
+- whether the webhook dedupe cache store is usable: `array`/`null` is an error, `file` a warning.
+
+Errors exit with status 1; warnings are reported but exit 0.
+
 ## Laravel HTTP client
 
 Requests pass through Laravel's HTTP client, so Laravel HTTP events and configured Guzzle options are available. Configure `timeout`, `connect_timeout`, `retries`, `retry_delay_ms`, and optional Guzzle `options` in `config/beel.php`. Retries apply to connection errors, HTTP 429, and 5xx responses; a 429's `Retry-After` (capped at 60s) is honored when present, falling back to `retry_delay_ms` otherwise.

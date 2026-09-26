@@ -21,6 +21,13 @@ use Lenorix\BeelSdk\Resource\AccountScope;
  * @property-read AccountInvitationsResource $invitations
  * @property-read AccountWebhooksResource $webhooks
  * @property-read AccountEmailsResource $emails
+ *
+ * @method \Lenorix\BeelSdk\Generated\Model\ManagedAccountSummary get()
+ * @method \Lenorix\BeelSdk\Generated\Model\ProvisioningUsage usage()
+ * @method mixed changeAccessLevel(\Lenorix\BeelSdk\Generated\Model\ChangeAccessLevelRequest $request)
+ * @method \Lenorix\BeelSdk\Generated\Model\ClaimTokenResult createClaimToken(?\Lenorix\BeelSdk\Generated\Model\CreateClaimTokenRequest $request = null)
+ * @method mixed setOwner(\Lenorix\BeelSdk\Generated\Model\SetAccountOwnerRequest $request)
+ * @method mixed endManagement()
  */
 final class BeelAccount
 {

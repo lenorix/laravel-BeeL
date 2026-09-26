@@ -43,6 +43,10 @@ $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoi
 - BeeL does not retry deliveries answered with a 4xx. Never put rate limiting, auth or CSRF middleware in front of the webhook route. A signature that doesn't match the configured secret gets a retryable 503 (covers a just-rotated secret); anything else invalid gets a non-retryable 401. To recover events that never arrived, run or schedule `php artisan beel:retry-webhook-deliveries` (or set `beel.webhook_delivery_retry.schedule`): it asks BeeL to redeliver events with no successful attempt, and dispatches `BeelWebhookDeliveryAbandoned` / `BeelWebhookSubscriptionInactive` (plus a log warning and a failure exit code) when it gives up on an event or finds a deactivated subscription; listen to those to alert or resync. Do not dispatch `BeelWebhookReceived` from delivery logs yourself; redelivery keeps BeeL's history accurate and exercises the real endpoint.
 - The secret defaults to `services.beel.webhook_secret`. For one secret per tenant, point each BeeL subscription at `route('beel.webhook', ['beelWebhookKey' => ...])` and bind a `WebhookSecretResolver` that reads `$request->route('beelWebhookKey')`; never choose the secret from the unverified payload.
 
+### Diagnosing
+
+- Run `php artisan beel:check` to diagnose the setup (key and environment, account, company readiness and blockers, key scopes, webhook subscription URL and status, webhook secret, dedupe cache store). It is read-only; errors exit 1.
+
 ### Testing
 
 - Tests must never reach the real BeeL API. All SDK traffic goes through Laravel's HTTP client, so use `Http::fake()` and `Http::preventStrayRequests()`.
