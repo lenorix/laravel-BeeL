@@ -13,6 +13,7 @@ use Lenorix\BeelSdk\Generated\Model\WebhookDeliveryLog;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 
 final class RetryWebhookDeliveriesCommand extends Command
@@ -74,8 +75,7 @@ final class RetryWebhookDeliveriesCommand extends Command
         $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId}";
 
         if ($latest->getAttemptNumber() >= $maxAttempts) {
-            $this->warn("Giving up on {$label}: {$latest->getAttemptNumber()} attempts, none delivered.");
-            $this->healthy = false;
+            $this->reportAbandoned($account, $webhookId, $eventId, $latest, $label);
 
             return;
         }
@@ -116,6 +116,40 @@ final class RetryWebhookDeliveriesCommand extends Command
         }
 
         return $ids;
+    }
+
+    /** The app never received this event and we stop retrying it: how to recover is the app's call. */
+    private function reportAbandoned(BeelAccount $account, string $webhookId, string $eventId, WebhookDeliveryLog $latest, string $label): void
+    {
+        $payload = $latest->getPayload() !== null ? json_decode($latest->getPayload(), true) : null;
+
+        $event = new BeelWebhookDeliveryAbandoned(
+            accountId: $account->accountId,
+            subscriptionId: $webhookId,
+            eventId: $eventId,
+            eventType: $latest->getEventType(),
+            attempts: $latest->getAttemptNumber(),
+            lastDeliveryId: $latest->getId(),
+            lastHttpStatus: $latest->getHttpStatus(),
+            lastError: $latest->getErrorMessage(),
+            payload: is_array($payload) ? $payload : null,
+        );
+
+        $message = "Giving up on {$label}: {$event->attempts} attempts, none delivered.";
+        $this->warn($message);
+        Log::warning($message, [
+            'account_id' => $event->accountId,
+            'subscription_id' => $event->subscriptionId,
+            'event_id' => $event->eventId,
+            'event_type' => $event->eventType,
+            'attempts' => $event->attempts,
+            'last_delivery_id' => $event->lastDeliveryId,
+            'last_http_status' => $event->lastHttpStatus,
+            'last_error' => $event->lastError,
+        ]);
+        Event::dispatch($event);
+
+        $this->healthy = false;
     }
 
     /**

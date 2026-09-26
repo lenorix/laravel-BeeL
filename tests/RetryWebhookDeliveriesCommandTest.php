@@ -5,6 +5,7 @@ use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned;
 use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 
 const BEEL_ACCOUNTS_URL = 'https://beel.test/api/v1/accounts/acc-1';
@@ -135,6 +136,44 @@ it('gives up on events that reached the max attempts and fails so monitoring not
     expect(retriedDeliveryIds())->toBe(['d9']);
 });
 
+it('logs and dispatches an event for an abandoned delivery so the app can recover it', function () {
+    Event::fake([BeelWebhookDeliveryAbandoned::class]);
+    Log::spy();
+
+    $payload = ['id' => 'evt-1', 'type' => 'invoice.voided', 'company_id' => 'company-uuid', 'data' => ['invoice_id' => 'inv-1']];
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
+        array_merge(beelDelivery('d3', 'evt-1', 3, false, 5), ['event_type' => 'invoice.voided', 'error_message' => 'HTTP 500', 'payload' => json_encode($payload)]),
+        array_merge(beelDelivery('d1', 'evt-1', 1, false, 50), ['event_type' => 'invoice.voided']),
+    ]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries', ['--max-attempts' => 3])->assertFailed();
+
+    Event::assertDispatched(BeelWebhookDeliveryAbandoned::class, fn (BeelWebhookDeliveryAbandoned $event) => $event->accountId === 'acc-1'
+        && $event->subscriptionId === 'wh-1'
+        && $event->eventId === 'evt-1'
+        && $event->eventType === 'invoice.voided'
+        && $event->attempts === 3
+        && $event->lastDeliveryId === 'd3'
+        && $event->lastHttpStatus === 503
+        && $event->lastError === 'HTTP 500'
+        && $event->payload === $payload);
+
+    Log::shouldHaveReceived('warning')->withArgs(fn (string $message, array $context) => str_contains($message, 'evt-1')
+        && $context['attempts'] === 3);
+});
+
+it('does not dispatch the abandoned event while an event is still being retried', function () {
+    Event::fake([BeelWebhookDeliveryAbandoned::class]);
+
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
+        beelDelivery('d1', 'evt-1', 1, false, 5),
+    ]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    Event::assertNotDispatched(BeelWebhookDeliveryAbandoned::class);
+});
+
 it('only reports what it would retry in dry-run mode', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
         beelDelivery('d1', 'evt-1', 1, false, 5),
@@ -165,12 +204,12 @@ it('logs and dispatches an event for a deactivated subscription so the app can d
     Log::spy();
 
     $deactivatedAt = now()->subHour()->startOfSecond();
-    fakeBeelWebhookApi([beelSubscription('wh-off', active: false) + [
+    fakeBeelWebhookApi([array_merge(beelSubscription('wh-off', active: false), [
         'deactivated_by' => 'beel',
         'deactivated_at' => $deactivatedAt->format(DATE_ATOM),
         'consecutive_failures' => 25,
         'last_error' => 'HTTP 401',
-    ]], []);
+    ])], []);
 
     $this->artisan('beel:retry-webhook-deliveries')->assertFailed();
 

@@ -140,7 +140,7 @@ BeeL retries a failed delivery only 5 times over about 75 seconds, and not at al
 
 - Events with any successful attempt are skipped; attempts are grouped by BeeL's event id.
 - Only events first attempted within `max_age_minutes` (default 24 h) are retried.
-- Events that already have `max_attempts` attempts (default 8, BeeL's automatic ones included) are given up.
+- Events that already have `max_attempts` attempts (default 8, BeeL's automatic ones included) are given up: the app never received them, so the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookDeliveryAbandoned` (`accountId`, `subscriptionId`, `eventId`, `eventType`, `attempts`, `lastDeliveryId`, `lastHttpStatus`, `lastError`, and the `payload` BeeL tried to send) so the app can alert someone or re-read the affected resource from the API. It is dispatched on every run while the event is inside the retry window, so deduplicate notifications on `eventId`.
 - Subscriptions BeeL has deactivated (it pauses them after 25 consecutive failures over more than 48 hours) are not retried: the command logs a warning and dispatches `Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive` (`accountId`, `subscriptionId`, `url`, `deactivatedBy`, `deactivatedAt`, `consecutiveFailures`, `lastError`), so the app decides how to notify or react.
 - The command exits with a failure code when something was given up, a retry was rejected, or a subscription is inactive, so the scheduler or your monitoring notices.
 
