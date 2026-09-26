@@ -44,6 +44,10 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.4.1+.
 - `$company->invoices->storePreview()` (the invoice's WebP preview) and `$company->storeRepresentationDocument()` (the AEAT representation PDF) store those documents the same way as `storePdf()`. The download settings are `beel.downloads.*`, and the exceptions are `DocumentAlreadyExists` and `DocumentDownloadFailed`.
 - The PSR-18 bridge hands the SDK Guzzle's response as is (body in `php://temp`) instead of rebuilding it from a copied string.
 - `Jobs\Middleware\ThrottleBeelRequests` keeps queued jobs under BeeL's rate limit per API key (`beel.queue_rate_limit`, 250/min), releasing them until the window resets instead of provoking 429s. `StoreInvoicePdf` uses it and retries within a day, counting only exceptions.
+- Config values are read typed: numbers may come as env strings, but a wrong type (e.g. an array for `beel.http.timeout`) fails with an error naming the key instead of silently becoming 0.
+- `LaravelNetworkException` and `LaravelClientException` autoload like any other class.
+- Document downloads count bytes by position, so storage adapters that read a body twice (the AWS SDK computes a checksum first) no longer reject a valid download as too long.
+- The typed webhook events' `data()` checks the model it returns and throws `UnexpectedValueException` naming the event if the payload doesn't match.
 - `beel:check --api-key= --company-id= --account-id=` diagnoses one tenant instead of the default credentials.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.
