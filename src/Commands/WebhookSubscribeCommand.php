@@ -7,20 +7,19 @@ namespace Lenorix\LaravelBeel\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Console\ConfirmableTrait;
 use Illuminate\Support\Env;
-use Lenorix\BeelSdk\Generated\Model\CreateWebhookSubscriptionRequest;
-use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
-use Lenorix\BeelSdk\Webhook\WebhookEventType;
-use Lenorix\LaravelBeel\BeelAccount;
-use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\BeelWebhookSubscriptions;
 use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
+use Lenorix\LaravelBeel\Exceptions\RotatedWebhookSecretNotStored;
+use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionOrphaned;
 use Lenorix\LaravelBeel\Support\EnvFileWriter;
 
 /**
  * Creates this app's BeeL webhook subscription (or rotates its secret) and stores the signing secret
  * in .env. BeeL shows a secret only once, so the command checks everything it can before calling
  * BeeL, never prints the secret, and undoes a creation whose secret could not be saved.
- * Single-app: multi-tenant apps create subscriptions per tenant with $account->webhooks->create().
+ * Single-app: multi-tenant apps use BeelWebhookSubscriptions with their own store callback.
  */
 final class WebhookSubscribeCommand extends Command
 {
@@ -35,16 +34,13 @@ final class WebhookSubscribeCommand extends Command
 
     protected $description = 'Subscribe this app to BeeL webhooks (or rotate the secret) and store the secret in .env';
 
-    /** Only sent to the account that provisioned a managed account. */
-    private const PROVISIONER_EVENTS = ['account.claimed', 'company.created', 'representation.signed'];
-
-    public function handle(BeelManager $manager, EnvFileWriter $writer, WebhookSecretResolver $secrets): int
+    public function handle(BeelWebhookSubscriptions $subscriptions, EnvFileWriter $writer, WebhookSecretResolver $secrets): int
     {
         if (! $this->confirmToProceed()) {
             return self::FAILURE;
         }
 
-        $url = $this->stringOption('url') ?? rtrim((string) config('app.url'), '/').'/'.trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+        $url = $this->stringOption('url') ?? $subscriptions->url();
         $envKey = $this->stringOption('env-key') ?? 'BEEL_WEBHOOK_SECRET';
         $envPath = $this->laravel->environmentFilePath();
 
@@ -69,7 +65,7 @@ final class WebhookSubscribeCommand extends Command
         // The app must actually read the secret this command writes, or --rotate would kill the
         // secret it really uses and store the new one where nothing reads it.
         if (! $secrets instanceof ConfigWebhookSecretResolver) {
-            $this->error('A custom WebhookSecretResolver is bound, so the app does not read the webhook secret from .env. Manage those subscriptions with $account->webhooks instead.');
+            $this->error('A custom WebhookSecretResolver is bound, so the app does not read the webhook secret from .env. Use Lenorix\LaravelBeel\BeelWebhookSubscriptions with your own store callback instead.');
 
             return self::FAILURE;
         }
@@ -84,95 +80,81 @@ final class WebhookSubscribeCommand extends Command
             }
         }
 
-        try {
-            $account = $manager->account();
-            $existing = $this->subscriptionFor($account, $url);
-        } catch (\Throwable $exception) {
-            $this->error("Could not read the webhook subscriptions: {$exception->getMessage()}");
+        $saveFailure = null;
+        $store = function (#[\SensitiveParameter] string $secret) use ($writer, $envPath, $envKey, &$saveFailure): void {
+            try {
+                $writer->write($envPath, $envKey, $secret);
+            } catch (\Throwable $exception) {
+                $saveFailure = $exception; // tells a failed save apart from a BeeL error below
 
-            return self::FAILURE;
-        }
-
-        if ($this->option('rotate')) {
-            if ($existing === null) {
-                $this->error("There is no subscription for {$url} to rotate. Run without --rotate to create it.");
-
-                return self::FAILURE;
+                throw $exception;
             }
+        };
 
-            if (! $existing->getActive()) {
-                $this->warn("Subscription {$existing->getId()} is inactive; rotating its secret does not reactivate it (BeeL needs a successful test delivery first).");
-            }
-
-            return $this->rotate($account, $existing, $writer, $envPath, $envKey);
-        }
-
-        if ($existing !== null) {
-            // A second subscription would sign with another secret, so its deliveries would fail verification.
-            $this->error("Subscription {$existing->getId()} already delivers to {$url}. Use --rotate to replace its secret.");
-
-            return self::FAILURE;
-        }
-
-        return $this->create($account, $url, $writer, $envPath, $envKey);
+        return $this->option('rotate')
+            ? $this->rotate($subscriptions, $url, $store, $envKey)
+            : $this->create($subscriptions, $url, $store, $envKey, $saveFailure);
     }
 
-    private function create(BeelAccount $account, string $url, EnvFileWriter $writer, string $envPath, string $envKey): int
+    /** @param \Closure(string): void $store */
+    private function create(BeelWebhookSubscriptions $subscriptions, string $url, \Closure $store, string $envKey, ?\Throwable &$saveFailure): int
     {
         try {
-            $subscription = $account->webhooks->create(
-                (new CreateWebhookSubscriptionRequest)->setUrl($url)->setEvents($this->events()),
-            );
+            $subscription = $subscriptions->subscribe($store, url: $url, events: $this->events($subscriptions));
+        } catch (WebhookSubscriptionAlreadyExists $exception) {
+            // A second subscription would sign with another secret, so its deliveries would fail verification.
+            $this->error("Subscription {$exception->subscriptionId} already delivers to {$url}. Use --rotate to replace its secret.");
+
+            return self::FAILURE;
+        } catch (WebhookSubscriptionOrphaned $exception) {
+            $this->error("Could not save the secret to .env ({$exception->getPrevious()?->getMessage()}) nor delete subscription {$exception->subscriptionId}: delete it in BeeL and run this command again.");
+
+            return self::FAILURE;
         } catch (\Throwable $exception) {
-            $this->error("BeeL could not create the subscription: {$exception->getMessage()}");
+            $this->error($exception === $saveFailure
+                ? "Could not save the secret to .env ({$exception->getMessage()}); the new subscription was deleted, nothing changed."
+                : "Could not create the subscription: {$exception->getMessage()}");
 
             return self::FAILURE;
         }
 
-        try {
-            $writer->write($envPath, $envKey, $subscription->getSecret());
-        } catch (\Throwable $exception) {
-            // Without the secret the subscription is useless and its deliveries would fail: remove it.
-            try {
-                $account->webhooks->delete($subscription->getId());
-                $this->error("Could not save the secret to .env ({$exception->getMessage()}); the new subscription was deleted, nothing changed.");
-            } catch (\Throwable) {
-                $this->error("Could not save the secret to .env ({$exception->getMessage()}) nor delete subscription {$subscription->getId()}: delete it in BeeL and run this command again.");
-            }
-
-            return self::FAILURE;
-        }
-
-        $this->info("Subscribed {$url} (subscription {$subscription->getId()}); the signing secret was saved to {$envKey} in .env.");
+        $this->info("Subscribed {$url} (subscription {$subscription->id}); the signing secret was saved to {$envKey} in .env.");
         $this->line('BeeL sent a test delivery while creating it, before the secret was saved, so that one probably failed; that is expected.');
         $this->afterSecretChange();
 
         return self::SUCCESS;
     }
 
-    private function rotate(BeelAccount $account, WebhookSubscription $existing, EnvFileWriter $writer, string $envPath, string $envKey): int
+    /** @param \Closure(string): void $store */
+    private function rotate(BeelWebhookSubscriptions $subscriptions, string $url, \Closure $store, string $envKey): int
     {
         try {
-            $subscription = $account->webhooks->rotateSecret($existing->getId());
-        } catch (\Throwable $exception) {
-            $this->error("BeeL could not rotate the secret: {$exception->getMessage()}");
+            $existing = $subscriptions->find(url: $url);
+            if ($existing === null) {
+                $this->error("There is no subscription for {$url} to rotate. Run without --rotate to create it.");
 
-            return self::FAILURE;
-        }
+                return self::FAILURE;
+            }
+            if (! $existing->active) {
+                $this->warn("Subscription {$existing->id} is inactive; rotating its secret does not reactivate it (BeeL needs a successful test delivery first).");
+            }
 
-        try {
-            $writer->write($envPath, $envKey, $subscription->getSecret());
-        } catch (\Throwable $exception) {
+            $subscriptions->rotate($store, url: $url);
+        } catch (RotatedWebhookSecretNotStored $exception) {
             // The old secret is already invalid and the new one can't be fetched again: showing it once
             // is the only way to recover. This is the one case the command prints a secret.
-            $this->error("Could not save the rotated secret to .env ({$exception->getMessage()}). The old secret no longer works.");
+            $this->error("Could not save the rotated secret to .env ({$exception->getPrevious()?->getMessage()}). The old secret no longer works.");
             $this->warn("Set {$envKey} to this value now; BeeL will not show it again:");
-            $this->line($subscription->getSecret());
+            $this->line($exception->secret);
+
+            return self::FAILURE;
+        } catch (\Throwable $exception) {
+            $this->error("Could not rotate the secret: {$exception->getMessage()}");
 
             return self::FAILURE;
         }
 
-        $this->info("Rotated the secret of subscription {$existing->getId()}; the new secret was saved to {$envKey} in .env.");
+        $this->info("Rotated the secret of subscription {$existing->id}; the new secret was saved to {$envKey} in .env.");
         $this->line('Deliveries signed with the old secret between the rotation and the reload answer 503, so BeeL retries them.');
         $this->afterSecretChange();
 
@@ -188,35 +170,12 @@ final class WebhookSubscribeCommand extends Command
         $this->line('Restart long-running processes (Octane, queue workers, Horizon) so they read the new secret.');
     }
 
-    private function subscriptionFor(BeelAccount $account, string $url): ?WebhookSubscription
-    {
-        $page = 1;
-
-        do {
-            $result = $account->webhooks->list(['page' => $page++, 'limit' => 100]);
-
-            foreach ($result->getWebhooks() as $subscription) {
-                if (rtrim($subscription->getUrl(), '/') === rtrim($url, '/')) {
-                    return $subscription;
-                }
-            }
-        } while ($result->getPagination()->getHasNext());
-
-        return null;
-    }
-
     /** @return list<string> */
-    private function events(): array
+    private function events(BeelWebhookSubscriptions $subscriptions): array
     {
         $given = array_values(array_filter((array) $this->option('event'), fn ($event) => is_string($event) && $event !== ''));
-        if ($given !== []) {
-            return $given;
-        }
 
-        return array_values(array_diff(
-            array_map(fn (WebhookEventType $type) => $type->value, WebhookEventType::cases()),
-            self::PROVISIONER_EVENTS,
-        ));
+        return $given !== [] ? $given : $subscriptions->defaultEvents();
     }
 
     private function stringOption(string $name): ?string

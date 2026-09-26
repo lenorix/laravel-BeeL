@@ -144,7 +144,7 @@ it('deletes the new subscription when the secret cannot be saved, so no orphan i
         }
     });
 
-    $this->artisan('beel:webhook:subscribe')->doesntExpectOutputToContain('whsec_new123')->assertFailed();
+    $this->artisan('beel:webhook:subscribe')->doesntExpectOutputToContain('whsec_new123')->expectsOutputToContain('was deleted')->assertFailed();
 
     Http::assertSent(fn (ClientRequest $r) => $r->method() === 'DELETE' && str_ends_with(parse_url($r->url(), PHP_URL_PATH), '/webhooks/wh-new'));
 });

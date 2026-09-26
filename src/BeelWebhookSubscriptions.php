@@ -1,0 +1,162 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Lenorix\LaravelBeel;
+
+use Lenorix\BeelSdk\Generated\Model\CreateWebhookSubscriptionRequest;
+use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
+use Lenorix\BeelSdk\Webhook\WebhookEventType;
+use Lenorix\LaravelBeel\Exceptions\RotatedWebhookSecretNotStored;
+use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionAlreadyExists;
+use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionNotFound;
+use Lenorix\LaravelBeel\Exceptions\WebhookSubscriptionOrphaned;
+
+/**
+ * Manages BeeL webhook subscriptions pointing at this app, e.g. one per tenant
+ * (`/beel/webhook/{webhookKey}`). BeeL shows a subscription's secret only once, so it is handed to a
+ * `store` callback (persist it where your WebhookSecretResolver reads it) and never returned: if the
+ * callback fails after a create, the new subscription is deleted so no secret is lost.
+ *
+ * Credentials default to the bound CredentialsResolver; pass `apiKey`/`accountId` per tenant.
+ * The API key needs the webhooks:read and webhooks:write scopes.
+ */
+final class BeelWebhookSubscriptions
+{
+    /** Only sent to the account that provisioned a managed account. */
+    public const PROVISIONER_EVENTS = ['account.claimed', 'company.created', 'representation.signed'];
+
+    public function __construct(private BeelManager $manager) {}
+
+    /** The webhook URL for a key: APP_URL + beel.webhook_path [+ '/' + key]. */
+    public function url(?string $webhookKey = null): string
+    {
+        $url = rtrim((string) config('app.url'), '/').'/'.trim((string) config('beel.webhook_path', 'beel/webhook'), '/');
+
+        return $webhookKey === null || $webhookKey === '' ? $url : $url.'/'.rawurlencode($webhookKey);
+    }
+
+    /** @return list<string> Every event type except the provisioner-only ones. */
+    public function defaultEvents(): array
+    {
+        return array_values(array_diff(
+            array_map(fn (WebhookEventType $type) => $type->value, WebhookEventType::cases()),
+            self::PROVISIONER_EVENTS,
+        ));
+    }
+
+    /**
+     * Create the subscription and pass its secret to `$store`. If `$store` throws, the new
+     * subscription is deleted and the exception rethrown (or WebhookSubscriptionOrphaned if the
+     * delete fails too).
+     *
+     * @param  callable(string): mixed  $store
+     * @param  list<string>|null  $events  Defaults to defaultEvents().
+     *
+     * @throws WebhookSubscriptionAlreadyExists
+     */
+    public function subscribe(callable $store, ?string $webhookKey = null, ?array $events = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null): BeelWebhookSubscription
+    {
+        $url = $this->validatedUrl($url ?? $this->url($webhookKey));
+        $account = $this->manager->account(apiKey: $apiKey, accountId: $accountId);
+
+        $existing = $this->findIn($account, $url);
+        if ($existing !== null) {
+            throw new WebhookSubscriptionAlreadyExists($existing->getId(), $existing->getUrl());
+        }
+
+        $created = $account->webhooks->create(
+            (new CreateWebhookSubscriptionRequest)->setUrl($url)->setEvents($events ?? $this->defaultEvents()),
+        );
+
+        try {
+            $store($created->getSecret());
+        } catch (\Throwable $storeFailure) {
+            try {
+                $account->webhooks->delete($created->getId());
+            } catch (\Throwable) {
+                throw new WebhookSubscriptionOrphaned($created->getId(), $storeFailure);
+            }
+
+            throw $storeFailure;
+        }
+
+        return BeelWebhookSubscription::fromSdk($created);
+    }
+
+    /**
+     * Rotate the secret of the subscription for that URL and pass the new one to `$store`. BeeL
+     * invalidates the old secret immediately. If `$store` throws, RotatedWebhookSecretNotStored
+     * carries the new secret, the only copy left.
+     *
+     * @param  callable(string): mixed  $store
+     *
+     * @throws WebhookSubscriptionNotFound
+     * @throws RotatedWebhookSecretNotStored
+     */
+    public function rotate(callable $store, ?string $webhookKey = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null): BeelWebhookSubscription
+    {
+        $url = $this->validatedUrl($url ?? $this->url($webhookKey));
+        $account = $this->manager->account(apiKey: $apiKey, accountId: $accountId);
+
+        $existing = $this->findIn($account, $url) ?? throw new WebhookSubscriptionNotFound($url);
+        $rotated = $account->webhooks->rotateSecret($existing->getId());
+
+        try {
+            $store($rotated->getSecret());
+        } catch (\Throwable $storeFailure) {
+            throw new RotatedWebhookSecretNotStored($existing->getId(), $rotated->getSecret(), $storeFailure);
+        }
+
+        return BeelWebhookSubscription::fromSdk($existing);
+    }
+
+    /** The subscription delivering to that URL (trailing slash ignored), if any. */
+    public function find(?string $webhookKey = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null): ?BeelWebhookSubscription
+    {
+        $found = $this->findIn($this->manager->account(apiKey: $apiKey, accountId: $accountId), $url ?? $this->url($webhookKey));
+
+        return $found === null ? null : BeelWebhookSubscription::fromSdk($found);
+    }
+
+    /** Delete the subscription delivering to that URL. Returns false if there was none. */
+    public function unsubscribe(?string $webhookKey = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null): bool
+    {
+        $account = $this->manager->account(apiKey: $apiKey, accountId: $accountId);
+        $existing = $this->findIn($account, $url ?? $this->url($webhookKey));
+
+        if ($existing === null) {
+            return false;
+        }
+
+        $account->webhooks->delete($existing->getId());
+
+        return true;
+    }
+
+    private function findIn(BeelAccount $account, string $url): ?WebhookSubscription
+    {
+        $page = 1;
+
+        do {
+            $result = $account->webhooks->list(['page' => $page++, 'limit' => 100]);
+
+            foreach ($result->getWebhooks() as $subscription) {
+                if (rtrim($subscription->getUrl(), '/') === rtrim($url, '/')) {
+                    return $subscription;
+                }
+            }
+        } while ($result->getPagination()->getHasNext());
+
+        return null;
+    }
+
+    private function validatedUrl(string $url): string
+    {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false || ! str_starts_with($url, 'https://')) {
+            throw new \InvalidArgumentException("The webhook URL must be an absolute HTTPS URL; got {$url}. Set APP_URL or pass a url.");
+        }
+
+        return $url;
+    }
+}

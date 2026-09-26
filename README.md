@@ -294,7 +294,7 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 - refuses when the app would not read what it writes: a custom `WebhookSecretResolver` is bound, or `services.beel.webhook_secret` reads a different variable than `--env-key`;
 - writes `.env` in place with a file lock, like `php artisan key:generate`: other lines, the file's owner, group and mode are kept, and a symlinked `.env` (zero-downtime deploys) is written through to the shared file instead of being replaced. If it still can't save a newly created subscription's secret, it deletes that subscription so nothing is left half-configured. After `--rotate` the old secret is already invalid, so in that one case it prints the new secret once as the only way to recover.
 
-It subscribes every event except the provisioner-only ones (`--event=` to choose), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps create each tenant's subscription with `$account->webhooks->create()` and store its secret per tenant.
+It subscribes every event except the provisioner-only ones (`--event=` to choose), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps use `BeelWebhookSubscriptions` (below) with their own storage.
 
 ### One secret per tenant (optional)
 
@@ -321,7 +321,32 @@ class TenantWebhookSecrets implements WebhookSecretResolver
 $this->app->bind(WebhookSecretResolver::class, TenantWebhookSecrets::class);
 ```
 
-Build each tenant's URL with `route('beel.webhook', ['beelWebhookKey' => $tenant->webhook_key])` when creating its BeeL subscription. Returning `null` answers 503 (BeeL retries), and a signature that doesn't match the secret you return answers 503 as well. `/beel/webhook` without a segment keeps working, with `$request->route('beelWebhookKey')` being `null`.
+To create each tenant's subscription and keep its secret, use `Lenorix\LaravelBeel\BeelWebhookSubscriptions`. BeeL shows a secret only once, so it is handed to your `store` callback and never returned:
+
+```php
+use Lenorix\LaravelBeel\BeelWebhookSubscriptions;
+
+$subscriptions = app(BeelWebhookSubscriptions::class);
+
+$subscription = $subscriptions->subscribe(
+    store: fn (string $secret) => $tenant->update(['beel_webhook_secret' => $secret]), // e.g. an encrypted cast
+    webhookKey: $tenant->webhook_key,           // URL: APP_URL + webhook path + '/' + key
+    apiKey: $tenant->beel_api_key,              // optional; defaults to the CredentialsResolver
+    accountId: $tenant->beel_account_id,
+);
+$subscription->id; $subscription->url; $subscription->events; $subscription->active;
+
+$subscriptions->rotate(store: fn (string $secret) => $tenant->update(['beel_webhook_secret' => $secret]), webhookKey: $tenant->webhook_key, apiKey: $tenant->beel_api_key, accountId: $tenant->beel_account_id);
+$subscriptions->find(webhookKey: $tenant->webhook_key, apiKey: $tenant->beel_api_key, accountId: $tenant->beel_account_id);        // ?BeelWebhookSubscription
+$subscriptions->unsubscribe(webhookKey: $tenant->webhook_key, apiKey: $tenant->beel_api_key, accountId: $tenant->beel_account_id); // bool
+```
+
+- `subscribe()` subscribes every event except the provisioner-only ones unless you pass `events:`, and throws `WebhookSubscriptionAlreadyExists` instead of creating a second subscription for the same URL (trailing slash ignored), which would sign with a secret the app can't verify.
+- If `store` throws after a create, the new subscription is deleted and the exception rethrown, so no subscription is left whose secret nobody has. If that delete fails too, `WebhookSubscriptionOrphaned` (with `subscriptionId`) tells you to delete it by hand.
+- `rotate()` uses BeeL's rotation, which invalidates the old secret immediately. If `store` throws, `RotatedWebhookSecretNotStored` carries the new secret in `$secret` (never in its message): it is the only copy left, so persist it from there. It throws `WebhookSubscriptionNotFound` if there's nothing to rotate.
+- URLs must be HTTPS; `url()` builds the one for a key, and every method also accepts an explicit `url:`. The API key needs `webhooks:read` and `webhooks:write`.
+
+Build each tenant's URL with `$subscriptions->url($tenant->webhook_key)` (or `route('beel.webhook', ['beelWebhookKey' => $tenant->webhook_key])`) if you create the subscription elsewhere. Returning `null` answers 503 (BeeL retries), and a signature that doesn't match the secret you return answers 503 as well. `/beel/webhook` without a segment keeps working, with `$request->route('beelWebhookKey')` being `null`.
 
 Pick the secret only from the URL or other request metadata you control, never from the unverified payload: a tenant who knows its own secret could sign a payload carrying another tenant's `company_id` or `account_id`. For the same reason, **your listeners must identify the tenant by `$event->webhookKey`** (the URL segment the delivery arrived on), not by `$event->companyId` or `$event->accountId`, and should ignore events whose `companyId`/`accountId` don't belong to that tenant. This holds only if your resolver returns a distinct secret per key and `null` for unknown or missing keys, as above: with the default resolver, or one that falls back to a shared secret, any segment is accepted with that secret and `webhookKey` is just a label, not a verified tenant.
 
