@@ -14,7 +14,7 @@ First release. Requires PHP 8.4+, Laravel 12 or 13, and `lenorix/beel-sdk` 0.3+.
 - Credentials from `config/services.php` (`services.beel.key`, `company_id`, `account_id`) by default. Explicit arguments always win. Bind `Contracts\CredentialsResolver` to take the defaults from anywhere else, such as a settings table or the current tenant; it is resolved on every call.
 - All SDK traffic goes through Laravel's HTTP client, so HTTP events, `Http::fake()` and Guzzle options apply. Configurable timeouts and retries on connection errors, 429 and 5xx, honouring a 429's `Retry-After` (capped at 60 s). The SDK keeps adding `Idempotency-Key` to POST requests.
 - Webhook endpoint `POST /beel/webhook/{beelWebhookKey?}` that verifies the `BeeL-Signature` HMAC against the raw body and answers 202:
-  - It dispatches `Events\BeelWebhookReceived` before answering (a failing listener answers 503 so BeeL retries), with `id`, `type`, `data`, `payload`, `companyId`, `accountId`, `webhookKey` and `isTest()`.
+  - It dispatches `Events\BeelWebhookReceived` before answering (a failing listener answers 503 so BeeL retries), with `id`, `type`, `data`, `payload`, `companyId`, `accountId`, `webhookKey`, `isTest()` and `typed()` (the SDK's typed `WebhookEvent`, built lazily)`.
   - The secret comes from `services.beel.webhook_secret` by default. Bind `Contracts\WebhookSecretResolver` for one secret per tenant, chosen from the optional URL segment.
   - Answers:
     - 401: implausible signature headers, rejected from the header alone before resolving the secret or reading the body.

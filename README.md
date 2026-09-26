@@ -153,6 +153,17 @@ Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event):
 });
 ```
 
+`$event->data` is the raw array. For the SDK's typed models, call `$event->typed()`: it returns a `WebhookEvent` whose `getData()` is the model for that event type (e.g. `WebhookEventDataInvoiceIssued` with `getInvoiceId()`, `getInvoiceNumber()`), or a plain array for types the installed SDK doesn't know yet. It's built lazily, so a payload that doesn't match BeeL's schema only throws `WebhookPayloadError` in the listener that asks; the delivery itself is still accepted.
+
+```php
+use Lenorix\BeelSdk\Generated\Model\WebhookEventDataVeriFactuStatusUpdated;
+
+$data = $event->typed()->getData();
+if ($data instanceof WebhookEventDataVeriFactuStatusUpdated && $data->getNewStatus() === 'REJECTED') {
+    FixRejectedInvoice::dispatch($data->getInvoiceId());
+}
+```
+
 BeeL may redeliver the same event (e.g. if a prior delivery timed out); every delivery of an event carries the same id, also sent as its `Idempotency-Key` header. The package remembers accepted events for `webhook_dedupe_seconds` (15 minutes by default) in the cache: a redelivery within that window gets the same 202 and does not dispatch `BeelWebhookReceived` again, and two simultaneous deliveries of the same event dispatch it only once, because the claim uses the atomic `Cache::add()`. Details:
 
 - Only verified, accepted (202) deliveries are remembered, so an unverified request can't block a real event and a 503 (e.g. wrong secret, or a listener that failed) is still retried by BeeL: a failed listener releases the claim.

@@ -256,7 +256,7 @@ final class BeelFake
             'invoice.email.sent' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'invoice_number' => 'A/2025/0042', 'all_recipients' => ['cliente@ejemplo.com'], 'sent_at' => '2025-01-20T10:36:00Z'],
             'invoice.pdf.generated' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'invoice_number' => 'A/2025/0042'],
             'invoice.voided' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'invoice_number' => 'A/2025/0042', 'cancellation_reason' => 'Issued by mistake'],
-            'invoice.schedule_failed' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'customer_name' => 'Cliente Ejemplo SL', 'scheduled_for' => '2025-01-20T08:00:00Z', 'blocker' => 'NIF_NOT_REGISTERED'],
+            'invoice.schedule_failed' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'invoice_number' => null, 'customer_name' => 'Cliente Ejemplo SL', 'scheduled_for' => '2025-01-20', 'blocker' => 'NIF_NOT_REGISTERED'],
             'recurring_invoice.paused' => ['recurring_invoice_id' => '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d', 'name' => 'Cuota mensual mantenimiento', 'reason' => 'GENERATION_FAILURE', 'blocker' => 'NIF_NOT_REGISTERED', 'since' => '2025-01-20T08:00:00Z'],
             'verifactu.status.updated' => ['invoice_id' => 'f47ac10b-58cc-4372-a567-0e02b2c3d479', 'invoice_number' => 'A/2025/0042', 'verifactu_registration_id' => '2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e', 'previous_status' => 'PENDING', 'new_status' => 'ACCEPTED', 'qr_url' => 'https://verifactu.agenciatributaria.gob.es/v?id=a7f3c9e2b1d4f8a6'],
             'account.claimed' => ['account_id' => '9b2e4c1a-7d3f-4e8b-a6c5-1f0d2e3b4a5c', 'external_ref' => 'acct-2041', 'email' => 'owner@cliente.es'],
