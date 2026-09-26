@@ -7,8 +7,10 @@ return [
     // attacks. Matches the SDK's own WebhookVerifier default.
     'webhook_replay_tolerance_seconds' => 300,
     // BeeL redelivers an event with the same id (its Idempotency-Key). Accepted events are remembered
-    // for this many seconds so a redelivery gets the same 202 without dispatching BeelWebhookReceived
-    // again. null or 0 disables it. Listeners should still deduplicate on $event->id for longer windows.
+    // for this many seconds (at least twice webhook_replay_tolerance_seconds, so a captured signature
+    // can't be replayed after its claim expires) and a redelivery gets the same 202 without
+    // dispatching BeelWebhookReceived again. null or 0 disables it (and reopens that replay window).
+    // Listeners should still deduplicate on $event->id for longer windows.
     'webhook_dedupe_seconds' => 900,
     // Cache store for that memory; null uses the default store. The claim must be atomic and shared by
     // every process receiving webhooks: use redis, memcached, database or dynamodb (file only for a

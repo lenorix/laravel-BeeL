@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel\Http\Controllers;
 
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Foundation\Http\Kernel as FoundationHttpKernel;
+use Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -15,7 +18,7 @@ use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 final class BeelWebhookController
 {
-    public function __invoke(Request $request, WebhookSecretResolver $secrets): JsonResponse
+    public function __invoke(Request $request, WebhookSecretResolver $secrets, HttpKernel $kernel): JsonResponse
     {
         $tolerance = (int) config('beel.webhook_replay_tolerance_seconds', 300);
 
@@ -58,14 +61,11 @@ final class BeelWebhookController
         $webhookKey = $request->route('beelWebhookKey');
         $webhookKey = is_string($webhookKey) && $webhookKey !== '' ? $webhookKey : null;
 
-        if (! self::isFirstDelivery($id, $webhookKey)) {
+        if (! self::isFirstDelivery($id, $secret, $tolerance)) {
             return self::received();
         }
 
-        // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
-        // Listeners that must survive a worker restart or run reliably under load should still
-        // implement ShouldQueue; this only protects response latency, not delivery guarantees.
-        defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)));
+        self::afterResponse($kernel, fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)));
 
         return self::received();
     }
@@ -95,13 +95,14 @@ final class BeelWebhookController
 
     /**
      * BeeL redelivers an event with the same id (also sent as the Idempotency-Key header). Remember
-     * accepted events for a while so a redelivery gets the same 202 without dispatching the Laravel
-     * event twice. Only verified, accepted deliveries are remembered, keyed on the signed payload id
-     * rather than the unsigned header, so an unverified request can't block a real event. The webhook
-     * key is part of the cache key so one tenant can't consume another tenant's event id. Cache::add
-     * is atomic, so concurrent redeliveries dispatch once.
+     * accepted events so a redelivery gets the same 202 without dispatching the Laravel event twice.
+     * Cache::add is atomic, so concurrent duplicates dispatch once. Only verified, accepted deliveries
+     * get here, and the key is derived from the signed payload id and the secret that verified it
+     * (never the unsigned header or the URL segment, which the signature doesn't cover): replaying a
+     * captured delivery to another URL can't dodge it, and each subscription's secret keeps tenants
+     * apart. The claim lasts at least twice the replay tolerance, the span one signature stays valid.
      */
-    private static function isFirstDelivery(string $eventId, ?string $webhookKey): bool
+    private static function isFirstDelivery(string $eventId, string $secret, int $tolerance): bool
     {
         $seconds = config('beel.webhook_dedupe_seconds', 900);
         if (! is_numeric($seconds) || (int) $seconds <= 0) {
@@ -109,9 +110,29 @@ final class BeelWebhookController
         }
 
         $store = config('beel.webhook_dedupe_store');
-        $key = 'beel:webhook:'.hash('sha256', ($webhookKey ?? '').'|'.$eventId);
+        $key = 'beel:webhook:'.hash_hmac('sha256', $eventId, $secret);
 
-        return Cache::store(is_string($store) && $store !== '' ? $store : null)->add($key, true, (int) $seconds);
+        return Cache::store(is_string($store) && $store !== '' ? $store : null)
+            ->add($key, true, max((int) $seconds, 2 * $tolerance));
+    }
+
+    /**
+     * Runs the callback after the response is sent. defer() only runs when the app's global middleware
+     * includes InvokeDeferredCallbacks, which apps upgraded from Laravel 10 with their own Http\Kernel
+     * may lack; then fall back to a terminating callback, which the kernel always runs. Exactly one of
+     * the two is used, so the event is never dispatched twice.
+     */
+    private static function afterResponse(HttpKernel $kernel, \Closure $callback): void
+    {
+        if ($kernel instanceof FoundationHttpKernel && $kernel->hasMiddleware(InvokeDeferredCallbacks::class)) {
+            // Listeners that must survive a worker restart or run reliably under load should still
+            // implement ShouldQueue; this only protects response latency, not delivery guarantees.
+            defer($callback);
+
+            return;
+        }
+
+        app()->terminating(fn () => rescue($callback));
     }
 
     private static function received(): JsonResponse

@@ -1,9 +1,13 @@
 <?php
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
+use Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -221,10 +225,10 @@ it('tells listeners which webhook key verified the event', function () {
     });
 
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
-    $signature = signBeelPayload($payload, 'test-webhook-secret');
+    $other = ['id' => 'evt_2', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]; // a distinct event, so dedupe doesn't apply
 
-    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+    $this->postJson('/beel/webhook', $other, ['BeeL-Signature' => signBeelPayload($other, 'test-webhook-secret')])->assertStatus(202);
 
     Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === 'tenant-a');
     Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === null);
@@ -234,10 +238,10 @@ it('treats the bare path and any segment the same with the default config resolv
     Event::fake();
 
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
-    $signature = signBeelPayload($payload, 'test-webhook-secret');
+    $other = ['id' => 'evt_2', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']]; // a distinct event, so dedupe doesn't apply
 
-    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
-    $this->postJson('/beel/webhook/anything', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+    $this->postJson('/beel/webhook/anything', $other, ['BeeL-Signature' => signBeelPayload($other, 'test-webhook-secret')])->assertStatus(202);
 
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
 });
@@ -255,13 +259,32 @@ it('answers a redelivered event the same way without dispatching it again', func
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
 });
 
-it('keeps deduplication separate per webhook key so one tenant cannot swallow another tenant\'s event', function () {
+it('does not re-dispatch a captured delivery replayed to a different URL segment', function () {
+    // The signature covers the body, not the URL: with the default resolver any segment is accepted
+    // with the same secret, so the dedupe key must not depend on the segment.
     Event::fake();
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')];
 
-    $this->postJson('/beel/webhook/tenant-a', $payload, $headers)->assertStatus(202);
-    $this->postJson('/beel/webhook/tenant-b', $payload, $headers)->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
+    $this->postJson('/beel/webhook/other', $payload, $headers)->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('keeps deduplication separate per tenant secret so one tenant cannot swallow another tenant\'s event', function () {
+    Event::fake();
+    app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
+    {
+        public function resolve(Request $request): ?string
+        {
+            return ['tenant-a' => 'secret-a', 'tenant-b' => 'secret-b'][$request->route('beelWebhookKey')] ?? null;
+        }
+    });
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'secret-a')])->assertStatus(202);
+    $this->postJson('/beel/webhook/tenant-b', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'secret-b')])->assertStatus(202);
 
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
 });
@@ -296,4 +319,60 @@ it('can disable webhook deduplication', function () {
     $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
 
     Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
+});
+
+it('remembers events at least twice the replay tolerance, so a signature can never be replayed after the claim expires', function () {
+    config()->set('beel.webhook_dedupe_seconds', 60);
+    config()->set('beel.webhook_replay_tolerance_seconds', 600);
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $signature = signBeelPayload($payload, 'test-webhook-secret');
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->travel(10)->minutes(); // past the configured 60 s, still inside the 2 x 600 s the signature is valid for
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('answers 500 when the dedupe cache is unavailable, so BeeL retries the delivery', function () {
+    config()->set('cache.stores.broken', ['driver' => 'broken']);
+    Cache::extend('broken', fn () => Cache::repository(new class extends ArrayStore
+    {
+        public function add($key, $value, $seconds)
+        {
+            throw new RuntimeException('cache down');
+        }
+    }));
+    config()->set('beel.webhook_dedupe_store', 'broken');
+    Event::fake();
+    $this->withoutExceptionHandling([RuntimeException::class]);
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(500);
+    Event::assertNotDispatched(BeelWebhookReceived::class);
+});
+
+it('still dispatches the event when the app lacks the InvokeDeferredCallbacks middleware', function () {
+    // Apps upgraded from Laravel 10 with their own Http\Kernel don't run defer() callbacks.
+    $kernel = app(Kernel::class);
+    $kernel->setGlobalMiddleware(array_values(array_filter(
+        $kernel->getGlobalMiddleware(),
+        fn ($middleware) => $middleware !== InvokeDeferredCallbacks::class,
+    )));
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
+});
+
+it('dispatches exactly once through defer() when the middleware is present', function () {
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 1);
 });
