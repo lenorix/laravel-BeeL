@@ -14,6 +14,7 @@ use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\UnableToMoveFile;
+use Lenorix\BeelSdk\Exception\BeelNotReadyError;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfDownloadFailed;
@@ -47,9 +48,10 @@ final class InvoicePdfStorage
 
         for ($attempt = 1; ; $attempt++) {
             // A fresh URL every attempt: they expire after five minutes.
-            $pdf = $invoices->getPdf($invoiceId);
-            if ($pdf === null) {
-                throw new InvoicePdfNotReady($invoiceId);
+            try {
+                $pdf = $invoices->getPdf($invoiceId);
+            } catch (BeelNotReadyError $notReady) {
+                throw new InvoicePdfNotReady($invoiceId, $notReady->retryAfter, $notReady);
             }
 
             try {

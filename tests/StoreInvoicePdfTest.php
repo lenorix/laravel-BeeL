@@ -175,7 +175,7 @@ it('says when BeeL is still generating the PDF', function () {
     Http::fake(['*/invoices/inv-1/pdf' => Http::response(null, 202, ['Retry-After' => '2'])]);
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePdf('inv-1', 'a.pdf', disk: 'invoices'))
-        ->toThrow(InvoicePdfNotReady::class);
+        ->toThrow(fn (InvoicePdfNotReady $e) => expect($e->retryAfter)->toBe(2)->and($e->getMessage())->toContain('in 2 s'));
 });
 
 it('surfaces that a draft has no PDF', function () {

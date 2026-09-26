@@ -6,7 +6,7 @@ namespace Lenorix\LaravelBeel\Events;
 
 use Lenorix\BeelSdk\Exception\WebhookPayloadError;
 use Lenorix\BeelSdk\Generated\Model\WebhookEvent;
-use Lenorix\LaravelBeel\Support\WebhookEventHydrator;
+use Lenorix\BeelSdk\Webhook\WebhookVerifier;
 
 final class BeelWebhookReceived
 {
@@ -62,7 +62,8 @@ final class BeelWebhookReceived
      */
     public function typed(): WebhookEvent
     {
-        return $this->typed ??= WebhookEventHydrator::hydrate($this->payload);
+        // toEvent() only hydrates; the placeholder secret is never used to verify anything.
+        return $this->typed ??= (new WebhookVerifier('unused'))->toEvent($this->payload);
     }
 
     /** True only for test deliveries triggered from the BeeL dashboard, never for live events. */

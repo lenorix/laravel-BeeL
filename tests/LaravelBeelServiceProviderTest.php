@@ -61,11 +61,9 @@ it('adds the BeeL request id, error code and status to the log context of report
 
     $handler = app(ExceptionHandler::class);
 
-    expect($handler->buildContextForException($error))->toMatchArray([
-        'beel_request_id' => BeelFake::REQUEST_ID,
-        'beel_api_code' => 'EMISSION_NOT_READY',
-        'beel_status' => 422,
-    ])
-        ->and($handler->buildContextForException(new RuntimeException('Issuing failed', previous: $error)))->toHaveKey('beel_api_code', 'EMISSION_NOT_READY')
-        ->and($handler->buildContextForException(new RuntimeException('unrelated')))->not->toHaveKey('beel_request_id');
+    $expected = ['request_id' => BeelFake::REQUEST_ID, 'api_code' => 'EMISSION_NOT_READY', 'status_code' => 422];
+
+    expect($handler->buildContextForException($error))->toMatchArray($expected)
+        ->and($handler->buildContextForException(new RuntimeException('Issuing failed', previous: new LogicException('step', previous: $error))))->toMatchArray($expected)
+        ->and($handler->buildContextForException(new RuntimeException('unrelated')))->not->toHaveKey('request_id');
 });

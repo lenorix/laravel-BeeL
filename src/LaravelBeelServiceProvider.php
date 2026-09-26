@@ -8,6 +8,7 @@ use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Lenorix\BeelSdk\Exception\BeelApiError;
+use Lenorix\BeelSdk\Exception\BeelNotReadyError;
 use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
@@ -52,9 +53,9 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
             }
         });
 
-        // Adds BeeL's request id, error code and status to the log context of any reported exception
-        // caused by a BeeL API error (also when the app wrapped it), so a log line is enough to ask
-        // BeeL support about a failed call.
+        // Laravel already logs the context() of a reported BeeL error (request_id, api_code,
+        // status_code, ...). Add the same keys when the app wrapped it in its own exception, so a log
+        // line is always enough to ask BeeL support about a failed call.
         $this->callAfterResolving(ExceptionHandler::class, function (ExceptionHandler $handler): void {
             if (method_exists($handler, 'buildContextUsing')) {
                 $handler->buildContextUsing(static fn (\Throwable $exception): array => self::beelErrorContext($exception));
@@ -74,19 +75,25 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
         ConvertEmptyStringsToNull::skipWhen($isWebhook);
     }
 
-    /** @return array<string, int|string> */
+    /** @return array<string, mixed> */
     private static function beelErrorContext(\Throwable $exception): array
     {
-        for ($current = $exception; $current !== null; $current = $current->getPrevious()) {
-            if ($current instanceof BeelApiError) {
-                return array_filter([
-                    'beel_request_id' => $current->requestId,
-                    'beel_api_code' => $current->apiCode,
-                    'beel_status' => $current->statusCode,
-                ], static fn ($value): bool => $value !== null && $value !== '' && $value !== 0);
+        if (self::isBeelError($exception)) {
+            return []; // Laravel adds its context() itself.
+        }
+
+        for ($current = $exception->getPrevious(); $current !== null; $current = $current->getPrevious()) {
+            if (self::isBeelError($current)) {
+                return $current->context();
             }
         }
 
         return [];
+    }
+
+    /** @phpstan-assert-if-true BeelApiError|BeelNotReadyError $exception */
+    private static function isBeelError(\Throwable $exception): bool
+    {
+        return $exception instanceof BeelApiError || $exception instanceof BeelNotReadyError;
     }
 }

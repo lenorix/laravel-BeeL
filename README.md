@@ -128,7 +128,7 @@ Each of these is documented in its PHPDoc and in `config/beel.php`:
 - **Integrators** (keys with `accounts:*` scopes):
   - `beel:webhook:subscribe --provisioner-events --account-relationship=all`;
   - `$event->accountRelationship` and `$event->accountExternalRef`.
-- **Logs and metrics.** Reported BeeL errors carry `beel_request_id`, `beel_api_code` and `beel_status` in their log context. For metrics, listen to Laravel's HTTP client events.
+- **Logs and metrics.** Reported BeeL errors carry `request_id`, `api_code` and `status_code` in their log context, also when your own exception wraps them. For metrics, listen to Laravel's HTTP client events.
 - **HTTP settings.** Timeouts and retries are in `config/beel.php` (`php artisan vendor:publish --tag="beel-config"`).
 - **Your own endpoint.** Set `beel.register_webhook_route` to `false` and use the SDK's `WebhookVerifier`.
 
@@ -140,7 +140,7 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 
 - PHP 8.4+
 - Laravel 13
-- `lenorix/beel-sdk` 0.3+
+- `lenorix/beel-sdk` 0.4+
 
 ## License
 

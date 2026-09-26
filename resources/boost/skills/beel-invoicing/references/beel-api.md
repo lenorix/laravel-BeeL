@@ -117,7 +117,7 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 
 ## PDF and email
 
-- `getPdf()`: presigned URL valid for 5 minutes; waits up to 10 s (`Prefer: wait=N`); 202 with `Retry-After` while rendering. Drafts: `400 INVOICE_NOT_ISSUED_NO_PDF`, use `preview()`. Never persist the URL.
+- `getPdf()`: presigned URL valid for 5 minutes; waits up to 10 s (`Prefer: wait=N`, SDK `waitSeconds:`); 202 with `Retry-After` while rendering (SDK throws `BeelNotReadyError`). Drafts: `400 INVOICE_NOT_ISSUED_NO_PDF`, use `preview()`. Never persist the URL.
 - `send()` queues an email; bulk via `deliver()` (one email, several invoices). Sandbox only sends to the account holder's own address, otherwise `403 ENVIO_NO_PERMITIDO`.
 - Email quotas (production / sandbox, rolling windows): 60/10 per hour, 300/30 per 24 h, 100 distinct recipients per 24 h, 10 sends of the same invoice. 429 means wait; 403 means not allowed.
 - With `send_automatically`, email rejections do not surface on the create call; check the account email history (`$account->emails->list()`). Delivery status `QUEUED`/`SENT`/`DELIVERED`/`BOUNCED`/`OPENED`/`FAILED`/`REJECTED`.

@@ -1,6 +1,6 @@
 # lenorix/beel-sdk
 
-Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.3 source on 2026-09-26. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
+Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.4 source on 2026-09-26. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
 
 In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Lenorix\LaravelBeel\BeelManager` (see `laravel-package.md`), never with `new Beel(...)`.
 
@@ -42,7 +42,7 @@ Methods: `get()`, `update(UpdateCompanyRequest)`, `delete()`, `fiscalSummary(arr
 | `void(string $invoiceId, VoidInvoiceRequest, array $headers = [])` | `setReason()`, optional `setVoidDate()`; number never reused |
 | `createCorrective(string $invoiceId, CreateCorrectiveInvoiceRequest, array $headers = [])` | `setRectificationType()`, `setRectificationCode()`, `setReason()`, optional `setLines()`, `setNotes()` |
 | `setStatus(string $invoiceId, SetInvoiceStatusRequest, array $headers = [])` | Commercial status (e.g. PAID) |
-| `getPdf(string $invoiceId)` | `InvoicePdfResponseData`: `getDownloadUrl()`, `getExpiresInSeconds()`, `getFileName()`; presigned URL, about 5 minutes |
+| `getPdf(string $invoiceId, ?int $waitSeconds = null)` | `InvoicePdfResponseData`: `getDownloadUrl()`, `getExpiresInSeconds()`, `getFileName()`; presigned URL, about 5 minutes. Throws `BeelNotReadyError` (`retryAfter`) while BeeL still renders it (202); `waitSeconds` sends `Prefer: wait=N` |
 | `preview(string $invoiceId)` | Draft PDF preview |
 | `send(string $invoiceId, ?SendEmailRequest = null, array $headers = [])` | Queued, not delivered; check the account email history |
 | `deliver(CreateInvoiceDeliveryRequest, array $headers = [])` | One email with several invoices |
@@ -84,9 +84,9 @@ Methods: `get()`, `usage()`, `changeAccessLevel(ChangeAccessLevelRequest)`, `cre
 
 ## Errors
 
-`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `WebhookVerificationError` is separate, with subclasses `WebhookHeaderError` (missing/malformed header), `WebhookTimestampError` (outside tolerance), `WebhookSignatureError` (no signature matches) and `WebhookPayloadError` (body not a JSON object / schema).
+`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `BeelApiError::context()` returns `status_code`, `api_code`, `request_id`, `retry_after`, `details` for logging. `Lenorix\BeelSdk\Exception\BeelNotReadyError` (HTTP 202, `retryAfter`, `requestId`, `context()`) does not extend `BeelApiError`: a generic `catch (BeelApiError)` doesn't catch it. `WebhookVerificationError` is separate, with subclasses `WebhookHeaderError` (missing/malformed header), `WebhookTimestampError` (outside tolerance), `WebhookSignatureError` (no signature matches) and `WebhookPayloadError` (body not a JSON object / schema).
 
 ## Webhooks
 
 - `Lenorix\BeelSdk\Webhook\WebhookEventType` cases: `VERIFACTU_STATUS_UPDATED` (`verifactu.status.updated`), `INVOICE_ISSUED` (`invoice.issued`), `INVOICE_EMAIL_SENT` (`invoice.email.sent`), `INVOICE_PDF_GENERATED` (`invoice.pdf.generated`), `INVOICE_VOIDED` (`invoice.voided`), `RECURRING_INVOICE_PAUSED` (`recurring_invoice.paused`), `INVOICE_SCHEDULE_FAILED` (`invoice.schedule_failed`), `ACCOUNT_CLAIMED` (`account.claimed`), `COMPANY_CREATED` (`company.created`), `REPRESENTATION_SIGNED` (`representation.signed`).
-- `WebhookVerifier(string $secret, int $toleranceSeconds = 300)`: `verify(string $rawBody, ?string $signatureHeader, ?int $now = null): array`; `verifyEvent(...)`: typed `WebhookEvent` with per-type `data` models. Step by step: `WebhookSignatureHeader::parse($header)`, then `$verifier->checkTimestamp($parsed)` and `->checkSignature($body, $parsed)` (reject junk before hashing). `WebhookSigner($secret)->sign($body, ?$timestamp)` builds a header the way BeeL does (tests, local). The package controller already does all this for you.
+- `WebhookVerifier(string $secret, int $toleranceSeconds = 300)`: `verify(string $rawBody, ?string $signatureHeader, ?int $now = null): array`; `verifyEvent(...)`: typed `WebhookEvent` with per-type `data` models. Step by step: `WebhookSignatureHeader::parse($header)`, then `$verifier->checkTimestamp($parsed)` and `->checkSignature($body, $parsed)` (reject junk before hashing). `WebhookSigner($secret)->sign($body, ?$timestamp)` builds a header the way BeeL does (tests, local). `$verifier->toEvent(array $payload)` hydrates a payload `verify()` already returned (no signature check). The package controller already does all this for you.
