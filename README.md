@@ -1,6 +1,6 @@
 # Laravel BeeL
 
-Laravel integration for the [`lenorix/beel-sdk`](https://github.com/lenorix/BeeL-php-sdk) client. The SDK handles the BeeL API itself; this package wires it into Laravel with config, the Laravel HTTP client, tenant-scoped clients, and webhook events.
+Laravel integration for the [`lenorix/beel-sdk`](https://github.com/lenorix/BeeL-php-sdk) client. The SDK handles the BeeL API itself; this package wires it into Laravel with config, the Laravel HTTP client, clients built with credentials resolved at runtime (not just from config), and webhook events.
 
 ## Installation
 
@@ -66,7 +66,7 @@ $beel = app(BeelManager::class)->client(apiKey: $customApiKey);
 
 Company scopes expose the SDK's resource objects directly, plus `scope` (the original SDK scope) and `raw` (the generated client for endpoints not covered by resource wrappers). `company->invoices->getPdf($id)` returns the SDK's PDF response, including its temporary download URL.
 
-Passing per-tenant credentials is also supported when an application needs it, but is optional:
+Both `client()` and `company()` also accept credentials resolved at runtime instead of read from config — useful for multi-tenant apps, but not limited to that case:
 
 ```php
 $company = app(BeelManager::class)->company(
