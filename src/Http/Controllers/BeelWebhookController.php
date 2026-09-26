@@ -9,7 +9,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Lenorix\BeelSdk\Exception\WebhookHeaderError;
+use Lenorix\BeelSdk\Exception\WebhookSignatureError;
 use Lenorix\BeelSdk\Exception\WebhookVerificationError;
+use Lenorix\BeelSdk\Webhook\WebhookSignatureHeader;
 use Lenorix\BeelSdk\Webhook\WebhookVerifier;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
@@ -42,9 +45,7 @@ final class BeelWebhookController
             // a non-retried 401 would drop every delivery for the rest of the deploy. Answer with a
             // retryable 503 instead, so BeeL's redelivery (5 attempts, up to ~75s) covers the gap.
             // A malformed body isn't fixed by retrying, so it keeps the non-retryable 401.
-            // This distinguishes the two by WebhookVerifier's exact message text, pinned by a test;
-            // if lenorix/beel-sdk ever changes it, this safely falls back to the previous 401.
-            if ($exception->getMessage() === 'Invalid BeeL webhook signature.') {
+            if ($exception instanceof WebhookSignatureError) {
                 self::warn('signature_mismatch', 'BeeL webhook signature does not match the configured secret (was it just rotated?); BeeL will retry the delivery.', $request);
 
                 return new JsonResponse(['message' => 'BeeL webhook signature does not match the configured secret.'], 503);
@@ -85,26 +86,24 @@ final class BeelWebhookController
     }
 
     /**
-     * Mirrors WebhookVerifier's header parsing and replay window, and additionally requires a v1
+     * Parses the header with the SDK and checks its replay window, and additionally requires a v1
      * shaped like a lowercase SHA-256 hex digest (the only thing hash_hmac can produce), so it
      * never rejects a signature the SDK would accept. The SDK still performs the real HMAC check.
      */
     private static function isPlausibleSignature(string $header, int $tolerance): bool
     {
-        $timestamp = null;
-        $hasDigest = false;
-
-        foreach (explode(',', $header) as $part) {
-            [$key, $value] = array_pad(explode('=', trim($part), 2), 2, null);
-
-            if ($key === 't' && $value !== null && ctype_digit($value)) {
-                $timestamp = (int) $value;
-            } elseif ($key === 'v1' && $value !== null && strlen($value) === 64 && ctype_xdigit($value) && strtolower($value) === $value) {
-                $hasDigest = true;
-            }
+        try {
+            $parsed = WebhookSignatureHeader::parse($header);
+        } catch (WebhookHeaderError) {
+            return false;
         }
 
-        return $timestamp !== null && $hasDigest && abs(time() - $timestamp) <= $tolerance;
+        $hasDigest = false;
+        foreach ($parsed->signatures as $signature) {
+            $hasDigest = $hasDigest || (strlen($signature) === 64 && ctype_xdigit($signature) && strtolower($signature) === $signature);
+        }
+
+        return $hasDigest && abs(time() - $parsed->timestamp) <= $tolerance;
     }
 
     /**

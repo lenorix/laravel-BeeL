@@ -11,8 +11,6 @@ use Illuminate\Console\Command;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Cache;
 use Lenorix\BeelSdk\Beel;
-use Lenorix\BeelSdk\Exception\BeelApiError;
-use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
 use Lenorix\BeelSdk\Generated\Model\MyIdentity;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
 use Lenorix\LaravelBeel\BeelManager;
@@ -76,20 +74,13 @@ final class CheckCommand extends Command
     private function identity(Beel $beel): ?MyIdentity
     {
         try {
-            $response = $beel->raw->getMyIdentity();
+            $identity = $beel->me->identity();
         } catch (\Throwable $exception) {
-            $this->fail_('BeeL rejected the API key or could not be reached: '.BeelApiError::fromGenerated($exception)->getMessage());
+            $this->fail_('BeeL rejected the API key or could not be reached: '.$exception->getMessage());
 
             return null;
         }
 
-        if ($response instanceof ErrorResponse || $response === null) {
-            $this->fail_('BeeL rejected the API key.');
-
-            return null;
-        }
-
-        $identity = $response->getData();
         $credential = $identity->getCredential();
         $this->ok("API key works: account {$identity->getAccountId()}, environment {$credential->getEnvironment()}.");
 
@@ -188,15 +179,8 @@ final class CheckCommand extends Command
     private function subscriptions(BeelManager $manager, string $accountId): array
     {
         $account = $manager->account(accountId: $accountId);
-        $items = [];
-        $page = 1;
 
-        do {
-            $result = $account->webhooks->list(['page' => $page++, 'limit' => 100]);
-            array_push($items, ...$result->getWebhooks());
-        } while ($result->getPagination()->getHasNext());
-
-        return $items;
+        return iterator_to_array($account->webhooks->all(['limit' => 100]), false);
     }
 
     private function checkWebhookSecret(WebhookSecretResolver $secrets): void

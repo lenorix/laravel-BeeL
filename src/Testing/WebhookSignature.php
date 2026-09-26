@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel\Testing;
 
+use Lenorix\BeelSdk\Webhook\WebhookSigner;
+
 /** Builds a BeeL-Signature header for tests, the way BeeL signs deliveries. */
 final class WebhookSignature
 {
@@ -13,8 +15,6 @@ final class WebhookSignature
      */
     public static function sign(string $rawBody, string $secret, ?int $timestamp = null): string
     {
-        $timestamp ??= time();
-
-        return "t={$timestamp},v1=".hash_hmac('sha256', $timestamp.'.'.$rawBody, $secret);
+        return (new WebhookSigner($secret))->sign($rawBody, $timestamp);
     }
 }

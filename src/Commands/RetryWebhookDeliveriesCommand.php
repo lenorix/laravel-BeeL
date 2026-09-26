@@ -11,9 +11,9 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Lenorix\BeelSdk\Exception\BeelApiError;
-use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
 use Lenorix\BeelSdk\Generated\Model\WebhookDeliveryLog;
 use Lenorix\BeelSdk\Generated\Model\WebhookSubscription;
+use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\LaravelBeel\AccountCredentials;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelManager;
@@ -145,7 +145,6 @@ final class RetryWebhookDeliveriesCommand extends Command
     }
 
     /**
-     * Calls the generated client directly because the SDK's retryDelivery() wrapper takes no headers.
      * The key is per delivery attempt (a UUID, so always a valid key): overlapping runs asking to retry
      * the same attempt don't make BeeL redeliver twice, while a later retry targets the new latest
      * attempt and so gets a new key. Returns false when another run's request with the same key is
@@ -154,24 +153,15 @@ final class RetryWebhookDeliveriesCommand extends Command
     private function retry(BeelAccount $account, string $webhookId, string $deliveryId): bool
     {
         try {
-            $response = $account->raw->retryAccountWebhookDelivery(
-                $account->accountId,
-                $webhookId,
-                $deliveryId,
-                ['Idempotency-Key' => "beel-webhook-retry-{$deliveryId}"],
-            );
-        } catch (\Throwable $exception) {
-            throw BeelApiError::fromGenerated($exception);
-        }
-
-        if ($response instanceof ErrorResponse) {
-            $error = BeelApiError::fromErrorResponse($response);
-
-            if ($error->apiCode === 'IDEMPOTENCY_KEY_PROCESSING') {
+            $account->webhooks
+                ->withOptions(new RequestOptions(idempotencyKey: "beel-webhook-retry-{$deliveryId}"))
+                ->retryDelivery($webhookId, $deliveryId);
+        } catch (BeelApiError $exception) {
+            if ($exception->apiCode === 'IDEMPOTENCY_KEY_PROCESSING') {
                 return false;
             }
 
-            throw $error;
+            throw $exception;
         }
 
         return true;
@@ -186,7 +176,7 @@ final class RetryWebhookDeliveriesCommand extends Command
         }
 
         $ids = [];
-        foreach ($this->pages(fn (int $page) => $account->webhooks->list(['page' => $page, 'limit' => self::PAGE_SIZE]), 'getWebhooks') as $subscription) {
+        foreach (iterator_to_array($account->webhooks->all(['limit' => self::PAGE_SIZE]), false) as $subscription) {
             /** @var WebhookSubscription $subscription */
             if (! $subscription->getActive()) {
                 $this->reportInactive($account, $subscription);
@@ -283,28 +273,7 @@ final class RetryWebhookDeliveriesCommand extends Command
     /** @return Collection<int, WebhookDeliveryLog> */
     private function deliveries(BeelAccount $account, string $webhookId): Collection
     {
-        return collect($this->pages(
-            fn (int $page) => $account->webhooks->listDeliveries($webhookId, ['page' => $page, 'limit' => self::PAGE_SIZE]),
-            'getDeliveries',
-        ));
-    }
-
-    /**
-     * @param  \Closure(int): mixed  $fetch
-     * @return list<mixed>
-     */
-    private function pages(\Closure $fetch, string $itemsGetter): array
-    {
-        $items = [];
-        $page = 1;
-
-        do {
-            $result = $fetch($page);
-            array_push($items, ...$result->{$itemsGetter}());
-            $page++;
-        } while ($result->getPagination()->getHasNext());
-
-        return $items;
+        return collect(iterator_to_array($account->webhooks->allDeliveries($webhookId, ['limit' => self::PAGE_SIZE]), false));
     }
 
     /** @return list<string> */

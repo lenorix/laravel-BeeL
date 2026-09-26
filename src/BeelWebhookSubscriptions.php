@@ -136,17 +136,11 @@ final class BeelWebhookSubscriptions
 
     private function findIn(BeelAccount $account, string $url): ?WebhookSubscription
     {
-        $page = 1;
-
-        do {
-            $result = $account->webhooks->list(['page' => $page++, 'limit' => 100]);
-
-            foreach ($result->getWebhooks() as $subscription) {
-                if (rtrim($subscription->getUrl(), '/') === rtrim($url, '/')) {
-                    return $subscription;
-                }
+        foreach ($account->webhooks->all(['limit' => 100]) as $subscription) {
+            if (rtrim($subscription->getUrl(), '/') === rtrim($url, '/')) {
+                return $subscription;
             }
-        } while ($result->getPagination()->getHasNext());
+        }
 
         return null;
     }

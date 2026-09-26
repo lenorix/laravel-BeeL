@@ -1,6 +1,6 @@
 # lenorix/beel-sdk
 
-Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.2 source on 2026-09-26. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
+Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.3 source on 2026-09-26. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
 
 In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Lenorix\LaravelBeel\BeelManager` (see `laravel-package.md`), never with `new Beel(...)`.
 
@@ -9,8 +9,8 @@ In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Leno
 - Resource methods unwrap BeeL's `{ "data": ... }` envelope and return Jane models with camelCase getters (`getId()`, `getInvoiceNumber()`, `getVerifactu()`). Many signatures say `mixed`; the real model is in the method's `@return` docblock.
 - Request bodies are Jane models built with fluent setters (`(new CreateCustomerRequest())->setName(...)`), or with the builders below. Model classes live in `Lenorix\BeelSdk\Generated\Model`.
 - `$query` arrays become query-string parameters (pagination `page`/`limit`, filters such as `external_ref`). Unknown query parameters are rejected by the API.
-- `$headers` lets you pass `Idempotency-Key` on POST operations.
-- No pagination helpers: `list()` returns the page model with `data` plus pagination metadata; loop on `page` yourself.
+- Per-call options: every resource has `withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: ..., headers: [...]))`, returning a copy; sub-resources inherit them (`$company->withOptions(...)->invoices`). Applied by the transport, so they work on every operation; the same key is resent on automatic retries. `Authorization`, `Host`, `Content-Type` and `Content-Length` are rejected.
+- Pagination: `list()` returns one page (`data` plus pagination metadata). Most listings also have a lazy generator `all(array $query = [])` (plus `allHistory()`, `allGrants()`, `allDeliveries()`) that fetches pages while you iterate, keeping filters and `limit`; `accounts->all()` follows `next_cursor`.
 
 ## Beel (entry point)
 
@@ -20,6 +20,7 @@ In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Leno
 
 ## Unscoped resources
 
+- `me->identity()`: `MyIdentity` (account id, credential environment and scopes of the API key); `me->update(UpdateMeRequest)`.
 - `catalogs->taxTypes()`, `->invoiceCustomizationOptions()`, `->updateMe(UpdateMeRequest)` (person preferences such as language).
 - `nif->validate(string $nif): ?ValidateNifResponse`: syntax plus AEAT census status (`VALID`, `INVALID`, `PENDING`). A well-formed NIF is not necessarily registered.
 - `accounts->list(array $query = [])`, `->provision(ProvisionAccountRequest)`, `->get(string $accountId)`, `->scope(string $accountId): AccountScope`. Listing and provisioning need privileged scopes granted by BeeL.
@@ -70,7 +71,7 @@ Methods: `get()`, `usage()`, `changeAccessLevel(ChangeAccessLevelRequest)`, `cre
 - `companies`: `list(array $query = [])`, `create(CreateCompanyRequest)`, `stats(array $query = [])`.
 - `members`: `list`, `get`, `update(string $id, ChangeMemberRoleRequest)`, `remove`, `listGrants(string $memberId)`, `putGrant(string $memberId, string $companyId, PutMemberGrantRequest)`, `removeGrant`.
 - `invitations`: `list`, `create(CreateInvitationRequest)`, `get`, `revoke`.
-- `webhooks`: `list`, `create(CreateWebhookSubscriptionRequest)`, `get`, `update`, `delete`, `test(string $id)`, `rotateSecret(string $id)`, `listDeliveries(string $id, array $query = [])`, `retryDelivery(string $webhookId, string $deliveryId)`.
+- `webhooks`: `list`, `create(CreateWebhookSubscriptionRequest)`, `get`, `update`, `delete`, `test(string $id)`, `rotateSecret(string $id)`, `listDeliveries(string $id, array $query = [])`, `retryDelivery(string $webhookId, string $deliveryId)`, generators `all()` and `allDeliveries(string $id)`.
 - `emails`: `list(array $query = [])`, `indicators(array $query = [])`, `get(string $emailId)`.
 
 ## Builders
@@ -83,9 +84,9 @@ Methods: `get()`, `usage()`, `changeAccessLevel(ChangeAccessLevelRequest)`, `cre
 
 ## Errors
 
-`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `WebhookVerificationError` is separate.
+`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `WebhookVerificationError` is separate, with subclasses `WebhookHeaderError` (missing/malformed header), `WebhookTimestampError` (outside tolerance), `WebhookSignatureError` (no signature matches) and `WebhookPayloadError` (body not a JSON object / schema).
 
 ## Webhooks
 
 - `Lenorix\BeelSdk\Webhook\WebhookEventType` cases: `VERIFACTU_STATUS_UPDATED` (`verifactu.status.updated`), `INVOICE_ISSUED` (`invoice.issued`), `INVOICE_EMAIL_SENT` (`invoice.email.sent`), `INVOICE_PDF_GENERATED` (`invoice.pdf.generated`), `INVOICE_VOIDED` (`invoice.voided`), `RECURRING_INVOICE_PAUSED` (`recurring_invoice.paused`), `INVOICE_SCHEDULE_FAILED` (`invoice.schedule_failed`), `ACCOUNT_CLAIMED` (`account.claimed`), `COMPANY_CREATED` (`company.created`), `REPRESENTATION_SIGNED` (`representation.signed`).
-- `WebhookVerifier(string $secret, int $toleranceSeconds = 300)`: `verify(string $rawBody, ?string $signatureHeader, ?int $now = null): array`; `verifyEvent(...)`: typed `WebhookEvent` with per-type `data` models. The package controller already does this for you.
+- `WebhookVerifier(string $secret, int $toleranceSeconds = 300)`: `verify(string $rawBody, ?string $signatureHeader, ?int $now = null): array`; `verifyEvent(...)`: typed `WebhookEvent` with per-type `data` models. Step by step: `WebhookSignatureHeader::parse($header)`, then `$verifier->checkTimestamp($parsed)` and `->checkSignature($body, $parsed)` (reject junk before hashing). `WebhookSigner($secret)->sign($body, ?$timestamp)` builds a header the way BeeL does (tests, local). The package controller already does all this for you.
