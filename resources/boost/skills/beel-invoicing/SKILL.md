@@ -77,6 +77,6 @@ Read only what the task needs:
 
 - `references/laravel-package.md`: this package's API, config, transport, errors, webhook endpoint and testing patterns.
 - `references/beel-sdk.md`: every SDK resource method, builders, exceptions, idempotency and response unwrapping.
-- `references/beel-api.md`: BeeL API behaviour, environments, errors, idempotency, accounts and companies, invoice lifecycle, taxes, email, PDF and webhook events.
+- `references/beel-api.md`: BeeL API behaviour, environments, errors, idempotency, accounts and companies, integrators (managed accounts, privileged scopes), invoice lifecycle, taxes, email, PDF and webhook events.
 - `references/verifactu.md`: the VERI*FACTU regulation facts an app still has to respect (scope, deadlines, QR rules for app-rendered invoices, invoice types, corrections).
 - `references/spain-invoicing-scope.md`: obligations outside BeeL and this package (B2B e-invoicing, Facturae, TicketBAI, SII) and their status.
