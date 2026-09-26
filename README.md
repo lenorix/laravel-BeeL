@@ -127,13 +127,13 @@ Requests pass through Laravel's HTTP client, so Laravel HTTP events and configur
 
 The simplest setup needs no code: put the subscription's signing secret in `services.beel.webhook_secret` (`BEEL_WEBHOOK_SECRET`), point the BeeL webhook subscription at `https://your-app/beel/webhook`, and listen to `BeelWebhookReceived`. Everything below that is extensible (per-tenant secrets, your own endpoint) is optional.
 
-By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected with 401 from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. A well-formed header whose HMAC doesn't match the configured secret — typically a secret rotated moments ago, since BeeL invalidates the old one immediately — gets a retryable 503 instead of 401, so BeeL's redelivery (5 attempts over roughly 75s) covers the deploy window; a malformed JSON body still gets a non-retryable 401. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` and `accountId` it belongs to (when the event type carries them), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard); listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
+By default, the package registers a POST route at `/beel/webhook`, verifies the exact raw request body against the `BeeL-Signature` HMAC header (rejecting signatures older than `beel.webhook_replay_tolerance_seconds`, 300 by default), and responds with 202. Requests that can't possibly be from BeeL (missing or malformed signature header, timestamp outside the window) are rejected with 401 from the header alone, before the secret is resolved or the body is read, and the route skips Laravel's `TrimStrings`/`ConvertEmptyStringsToNull` so the body is never parsed before verification. A well-formed header whose HMAC doesn't match the configured secret — typically a secret rotated moments ago, since BeeL invalidates the old one immediately — gets a retryable 503 instead of 401, so BeeL's redelivery (5 attempts over roughly 75s) covers the deploy window; a malformed JSON body still gets a non-retryable 401. The route is deliberately not rate limited: BeeL does not retry deliveries answered with a 4xx, so a throttled burst of legitimate events would be lost. Once the signature is verified, `BeelWebhookReceived` is dispatched via [`defer()`](https://laravel.com/docs/12.x/helpers#method-defer), so it runs after the 202 response has already been sent back to BeeL and never adds listener latency to the webhook round-trip. The event provides the event `id`, its `type`, its `data`, the complete `payload`, the `companyId` and `accountId` it belongs to (when the event type carries them), the `webhookKey` URL segment it arrived on (null on the bare path), and `isTest()` (true only for test deliveries triggered from the BeeL dashboard); listeners that need to survive a worker restart or guarantee delivery under load should still implement `ShouldQueue`, since `defer()` only protects response latency, not delivery.
 
 ```php
 use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event): void {
-    // $event->id, $event->type, $event->data, $event->payload, $event->companyId, $event->accountId, $event->isTest()
+    // $event->id, $event->type, $event->data, $event->payload, $event->companyId, $event->accountId, $event->webhookKey, $event->isTest()
 });
 ```
 
@@ -225,7 +225,7 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 
 ### One secret per tenant (optional)
 
-By default the secret comes from `services.beel.webhook_secret`, read by the bound `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` (`ConfigWebhookSecretResolver`). If several BeeL accounts or tenants send webhooks to the same app, each subscription has its own secret. The route accepts an optional trailing segment, `/beel/webhook/{tenant}`, so each subscription can point at its own URL, and your resolver picks the secret from it:
+By default the secret comes from `services.beel.webhook_secret`, read by the bound `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` (`ConfigWebhookSecretResolver`). If several BeeL accounts or tenants send webhooks to the same app, each subscription has its own secret. The route accepts an optional trailing segment, `/beel/webhook/{beelWebhookKey}`, so each subscription can point at its own URL, and your resolver picks the secret from it:
 
 ```php
 use Illuminate\Http\Request;
@@ -235,7 +235,12 @@ class TenantWebhookSecrets implements WebhookSecretResolver
 {
     public function resolve(Request $request): ?string
     {
-        return Tenant::where('webhook_key', $request->route('tenant'))->value('beel_webhook_secret');
+        $key = $request->route('beelWebhookKey');
+        if (! is_string($key) || $key === '') {
+            return null; // bare /beel/webhook: no tenant, never match a tenant with a null key
+        }
+
+        return Tenant::where('webhook_key', $key)->value('beel_webhook_secret');
     }
 }
 
@@ -243,9 +248,11 @@ class TenantWebhookSecrets implements WebhookSecretResolver
 $this->app->bind(WebhookSecretResolver::class, TenantWebhookSecrets::class);
 ```
 
-Build each tenant's URL with `route('beel.webhook', ['tenant' => $tenant->webhook_key])` when creating its BeeL subscription. Returning `null` answers 503 (BeeL retries), and a signature that doesn't match the secret you return answers 503 as well. `/beel/webhook` without a segment keeps working, with `$request->route('tenant')` being `null`.
+Build each tenant's URL with `route('beel.webhook', ['beelWebhookKey' => $tenant->webhook_key])` when creating its BeeL subscription. Returning `null` answers 503 (BeeL retries), and a signature that doesn't match the secret you return answers 503 as well. `/beel/webhook` without a segment keeps working, with `$request->route('beelWebhookKey')` being `null`.
 
-Pick the secret only from the URL or other request metadata you control, never from the unverified payload: a tenant who knows its own secret could sign a payload carrying another tenant's `company_id` or `account_id`. After verification, `$event->accountId` and `$event->companyId` come from a payload signed with that tenant's secret.
+Pick the secret only from the URL or other request metadata you control, never from the unverified payload: a tenant who knows its own secret could sign a payload carrying another tenant's `company_id` or `account_id`. For the same reason, **your listeners must identify the tenant by `$event->webhookKey`** (the URL segment whose secret verified the delivery), not by `$event->companyId` or `$event->accountId`, and should ignore events whose `companyId`/`accountId` don't belong to that tenant.
+
+A tenant-aware `CredentialsResolver` (one that reads the current request or authenticated tenant) returns `null` in queued listeners and scheduled commands, where there is no request. Queued webhook listeners should pass explicit credentials looked up from `$event->webhookKey`, and such apps must also bind `WebhookRetryAccounts` so the scheduled retry command knows which accounts to check.
 
 Disable the automatic route with `register_webhook_route => false` to register an application-owned endpoint. You can still use the SDK's `WebhookVerifier` directly.
 

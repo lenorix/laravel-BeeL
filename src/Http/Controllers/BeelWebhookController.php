@@ -57,7 +57,10 @@ final class BeelWebhookController
         // Deferred to after the response is sent so listener work never delays BeeL's 202 ack.
         // Listeners that must survive a worker restart or run reliably under load should still
         // implement ShouldQueue; this only protects response latency, not delivery guarantees.
-        defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload)));
+        $webhookKey = $request->route('beelWebhookKey');
+        $webhookKey = is_string($webhookKey) && $webhookKey !== '' ? $webhookKey : null;
+
+        defer(fn () => Event::dispatch(new BeelWebhookReceived($id, $type, $data, $payload, $webhookKey)));
 
         return new JsonResponse(['received' => true], 202);
     }

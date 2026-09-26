@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Lenorix\LaravelBeel;
 
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
-use Illuminate\Contracts\Container\Container;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 
@@ -18,7 +18,6 @@ final class BeelManager
     public function __construct(
         private ConfigRepository $config,
         private BeelHttpClientFactory $httpClientFactory,
-        private Container $container,
     ) {}
 
     public function client(?string $apiKey = null): Beel
@@ -69,9 +68,12 @@ final class BeelManager
         return new BeelAccount($this->client($apiKey), $accountId);
     }
 
-    /** Resolved per call, not injected once: this manager is a singleton, the resolver may be per-request. */
+    /**
+     * Resolved per call from the current container, not injected: this manager is a singleton, while
+     * the resolver may depend on per-request state (and Octane swaps the container per request).
+     */
     private function credentials(): CredentialsResolver
     {
-        return $this->container->make(CredentialsResolver::class);
+        return Container::getInstance()->make(CredentialsResolver::class);
     }
 }

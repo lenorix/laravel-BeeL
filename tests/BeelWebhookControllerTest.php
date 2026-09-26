@@ -184,7 +184,7 @@ it('passes an optional trailing path segment to the secret resolver so each tena
     {
         public function resolve(Request $request): ?string
         {
-            return ['tenant-a' => 'secret-a', 'tenant-b' => 'secret-b'][$request->route('tenant')] ?? null;
+            return ['tenant-a' => 'secret-a', 'tenant-b' => 'secret-b'][$request->route('beelWebhookKey')] ?? null;
         }
     });
 
@@ -199,7 +199,7 @@ it('passes an optional trailing path segment to the secret resolver so each tena
 
 it('builds per-tenant webhook URLs from the route name', function () {
     expect(route('beel.webhook'))->toEndWith('/beel/webhook')
-        ->and(route('beel.webhook', ['tenant' => 'tenant-a']))->toEndWith('/beel/webhook/tenant-a');
+        ->and(route('beel.webhook', ['beelWebhookKey' => 'tenant-a']))->toEndWith('/beel/webhook/tenant-a');
 });
 
 it('also skips the input-trimming middleware on per-tenant webhook URLs', function () {
@@ -208,4 +208,24 @@ it('also skips the input-trimming middleware on per-tenant webhook URLs', functi
     (new TrimStrings)->handle($request, fn ($request) => $request);
 
     expect($request->json('k'))->toBe('  x  ');
+});
+
+it('tells listeners which webhook key verified the event', function () {
+    Event::fake();
+    app()->bind(WebhookSecretResolver::class, fn () => new class implements WebhookSecretResolver
+    {
+        public function resolve(Request $request): ?string
+        {
+            return 'test-webhook-secret';
+        }
+    });
+
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $signature = signBeelPayload($payload, 'test-webhook-secret');
+
+    $this->postJson('/beel/webhook/tenant-a', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+
+    Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === 'tenant-a');
+    Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === null);
 });
