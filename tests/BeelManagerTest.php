@@ -6,6 +6,7 @@ use Lenorix\BeelSdk\Beel;
 use Lenorix\LaravelBeel\BeelAccount;
 use Lenorix\LaravelBeel\BeelCompany;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 
 beforeEach(function () {
     config()->set('services.beel.key', 'config-api-key');
@@ -30,7 +31,7 @@ it('throws when no api key is configured or provided', function () {
     config()->set('services.beel.key', null);
 
     app(BeelManager::class)->client();
-})->throws(InvalidArgumentException::class, 'Set services.beel.key or pass a tenant API key.');
+})->throws(InvalidArgumentException::class, 'No BeeL API key: pass one, set services.beel.key, or bind a CredentialsResolver that returns it.');
 
 it('throws when the configured api key is blank', function () {
     config()->set('services.beel.key', '   ');
@@ -76,7 +77,7 @@ it('throws when no company id is configured or provided', function () {
     config()->set('services.beel.company_id', null);
 
     app(BeelManager::class)->company();
-})->throws(InvalidArgumentException::class, 'Set services.beel.company_id or pass a tenant company UUID.');
+})->throws(InvalidArgumentException::class, 'No BeeL company id: pass one, set services.beel.company_id, or bind a CredentialsResolver that returns it.');
 
 it('creates an account scope using the configured account id', function () {
     $account = app(BeelManager::class)->account();
@@ -110,4 +111,68 @@ it('throws when no account id is configured or provided', function () {
     config()->set('services.beel.account_id', null);
 
     app(BeelManager::class)->account();
-})->throws(InvalidArgumentException::class, 'Set services.beel.account_id or pass an account UUID.');
+})->throws(InvalidArgumentException::class, 'No BeeL account id: pass one, set services.beel.account_id, or bind a CredentialsResolver that returns it.');
+
+function bindCredentials(?string $apiKey, ?string $accountId = null, ?string $companyId = null): void
+{
+    app()->bind(CredentialsResolver::class, fn () => new class($apiKey, $accountId, $companyId) implements CredentialsResolver
+    {
+        public function __construct(private ?string $key, private ?string $account, private ?string $company) {}
+
+        public function apiKey(): ?string
+        {
+            return $this->key;
+        }
+
+        public function accountId(): ?string
+        {
+            return $this->account;
+        }
+
+        public function companyId(): ?string
+        {
+            return $this->company;
+        }
+    });
+}
+
+it('takes default credentials from a bound resolver instead of config', function () {
+    config()->set('services.beel.key', null);
+    config()->set('services.beel.company_id', null);
+    bindCredentials('beel_sk_test_from_db', companyId: 'db-company-id');
+    Http::fake(['config.example.test/*' => Http::response(['data' => ['id' => 'db-company-id']], 200)]);
+
+    $company = app(BeelManager::class)->company();
+    $company->get();
+
+    expect($company->companyId)->toBe('db-company-id');
+    Http::assertSent(fn (ClientRequest $request) => $request->hasHeader('Authorization', 'Bearer beel_sk_test_from_db')
+        && str_contains($request->url(), 'db-company-id'));
+});
+
+it('takes the default account id from a bound resolver', function () {
+    config()->set('services.beel.account_id', null);
+    bindCredentials('beel_sk_test_from_db', accountId: 'db-account-id');
+
+    expect(app(BeelManager::class)->account()->accountId)->toBe('db-account-id');
+});
+
+it('asks the resolver on every call so per-request tenants never leak between calls', function () {
+    Http::fake(['config.example.test/*' => Http::response(['data' => ['id' => 'x']], 200)]);
+    $manager = app(BeelManager::class);
+
+    bindCredentials('beel_sk_test_tenant_a', companyId: 'company-a');
+    $manager->company()->get();
+
+    bindCredentials('beel_sk_test_tenant_b', companyId: 'company-b');
+    $manager->company()->get();
+
+    Http::assertSent(fn (ClientRequest $request) => $request->hasHeader('Authorization', 'Bearer beel_sk_test_tenant_a') && str_contains($request->url(), 'company-a'));
+    Http::assertSent(fn (ClientRequest $request) => $request->hasHeader('Authorization', 'Bearer beel_sk_test_tenant_b') && str_contains($request->url(), 'company-b'));
+});
+
+it('lets explicit arguments win over the bound resolver', function () {
+    bindCredentials('beel_sk_test_from_db', companyId: 'db-company-id');
+
+    expect(app(BeelManager::class)->company(apiKey: 'explicit', companyId: 'explicit-company')->companyId)->toBe('explicit-company');
+});

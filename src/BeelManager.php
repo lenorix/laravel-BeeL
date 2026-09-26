@@ -5,25 +5,31 @@ declare(strict_types=1);
 namespace Lenorix\LaravelBeel;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Container\Container;
 use Lenorix\BeelSdk\Beel;
+use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 
-/** Creates isolated SDK clients using application defaults or tenant credentials. */
+/**
+ * Creates isolated SDK clients. Explicit arguments win; otherwise credentials come from the bound
+ * CredentialsResolver (config by default).
+ */
 final class BeelManager
 {
     public function __construct(
         private ConfigRepository $config,
         private BeelHttpClientFactory $httpClientFactory,
+        private Container $container,
     ) {}
 
     public function client(?string $apiKey = null): Beel
     {
-        $apiKey ??= $this->config->get('services.beel.key');
+        $apiKey ??= $this->credentials()->apiKey();
         $baseUrl = $this->config->get('services.beel.base_url', 'https://app.beel.es/api');
         $retries = (int) $this->config->get('beel.http.retries', 3);
         $retryDelay = (int) $this->config->get('beel.http.retry_delay_ms', 100);
 
         if (! is_string($apiKey) || trim($apiKey) === '') {
-            throw new \InvalidArgumentException('Set services.beel.key or pass a tenant API key.');
+            throw new \InvalidArgumentException('No BeeL API key: pass one, set services.beel.key, or bind a CredentialsResolver that returns it.');
         }
         if (! is_string($baseUrl) || trim($baseUrl) === '') {
             throw new \InvalidArgumentException('services.beel.base_url must be a non-empty URL.');
@@ -43,10 +49,10 @@ final class BeelManager
 
     public function company(?string $apiKey = null, ?string $companyId = null): BeelCompany
     {
-        $companyId ??= $this->config->get('services.beel.company_id');
+        $companyId ??= $this->credentials()->companyId();
 
         if (! is_string($companyId) || trim($companyId) === '') {
-            throw new \InvalidArgumentException('Set services.beel.company_id or pass a tenant company UUID.');
+            throw new \InvalidArgumentException('No BeeL company id: pass one, set services.beel.company_id, or bind a CredentialsResolver that returns it.');
         }
 
         return new BeelCompany($this->client($apiKey), $companyId);
@@ -54,12 +60,18 @@ final class BeelManager
 
     public function account(?string $apiKey = null, ?string $accountId = null): BeelAccount
     {
-        $accountId ??= $this->config->get('services.beel.account_id');
+        $accountId ??= $this->credentials()->accountId();
 
         if (! is_string($accountId) || trim($accountId) === '') {
-            throw new \InvalidArgumentException('Set services.beel.account_id or pass an account UUID.');
+            throw new \InvalidArgumentException('No BeeL account id: pass one, set services.beel.account_id, or bind a CredentialsResolver that returns it.');
         }
 
         return new BeelAccount($this->client($apiKey), $accountId);
+    }
+
+    /** Resolved per call, not injected once: this manager is a singleton, the resolver may be per-request. */
+    private function credentials(): CredentialsResolver
+    {
+        return $this->container->make(CredentialsResolver::class);
     }
 }

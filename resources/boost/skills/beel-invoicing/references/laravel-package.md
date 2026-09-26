@@ -34,6 +34,8 @@ Verified against the package source on 2026-09-26.
 - `account(?string $apiKey = null, ?string $accountId = null): BeelAccount` uses `services.beel.account_id` when `$accountId` is null.
 - The facade `Lenorix\LaravelBeel\Facades\LaravelBeel` proxies the same three methods.
 
+Default credentials: when an argument is null, `BeelManager` asks the bound `Lenorix\LaravelBeel\Contracts\CredentialsResolver` (`apiKey()`, `accountId()`, `companyId()`, each `?string`). The default `ConfigCredentialsResolver` reads `services.beel.*`. Apps that keep credentials elsewhere (a settings table, the current tenant) bind their own implementation; it is resolved on every call, so it may use per-request state. Explicit arguments always win. The retry command uses the same resolver.
+
 `BeelCompany` and `BeelAccount` are thin decorators over the SDK's `CompanyScope` and `AccountScope`:
 
 - `$company->companyId` / `$account->accountId`, `->scope` (the SDK scope), `->raw` (the generated Jane client for endpoints without a resource wrapper).

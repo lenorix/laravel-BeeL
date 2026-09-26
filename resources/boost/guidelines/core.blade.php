@@ -22,6 +22,7 @@ $company->invoices->list(['page' => 1]);          // scoped SDK resources: invoi
 
 ### Rules that must never be broken
 
+- Default credentials come from config (`services.beel.*`) through the bound `Lenorix\LaravelBeel\Contracts\CredentialsResolver`. When the app keeps keys elsewhere (database, current tenant), bind its own `CredentialsResolver` instead of passing credentials around or copying them into config at runtime.
 - Get clients only through `BeelManager` or the `LaravelBeel` facade. Never `new Lenorix\BeelSdk\Beel(...)`: that bypasses Laravel's HTTP client, the configured timeouts and retries, and `Http::fake()`.
 - `company_id` and `account_id` are BeeL UUIDs, never a NIF. Sending a NIF where a company id is expected fails.
 - Use company- and account-scoped resources (`$company->invoices`, `$account->members`, ...). Never use the deprecated top-level `$beel->invoices`, `->customers`, `->products`, `->series`, `->configuration` or `->downloadPdf()`: they hit legacy routes BeeL is retiring.

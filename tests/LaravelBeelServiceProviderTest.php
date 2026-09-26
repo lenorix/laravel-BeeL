@@ -2,7 +2,9 @@
 
 use Lenorix\LaravelBeel\BeelHttpClientFactory;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\ConfigCredentialsResolver;
 use Lenorix\LaravelBeel\ConfigWebhookSecretResolver;
+use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Facades\LaravelBeel;
 
@@ -16,6 +18,10 @@ it('binds BeelHttpClientFactory as a singleton', function () {
 
 it('binds WebhookSecretResolver to the config-based resolver by default', function () {
     expect(app(WebhookSecretResolver::class))->toBeInstanceOf(ConfigWebhookSecretResolver::class);
+});
+
+it('binds CredentialsResolver to the config-based resolver by default', function () {
+    expect(app(CredentialsResolver::class))->toBeInstanceOf(ConfigCredentialsResolver::class);
 });
 
 it('resolves the facade to BeelManager', function () {

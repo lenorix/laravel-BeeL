@@ -7,6 +7,7 @@ use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
+use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -25,6 +26,7 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
     {
         $this->app->singleton(BeelManager::class);
         $this->app->singleton(BeelHttpClientFactory::class);
+        $this->app->bind(CredentialsResolver::class, ConfigCredentialsResolver::class);
         $this->app->bind(WebhookSecretResolver::class, ConfigWebhookSecretResolver::class);
     }
 

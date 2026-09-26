@@ -77,6 +77,39 @@ $company = app(BeelManager::class)->company(
 );
 ```
 
+### Where default credentials come from
+
+By default (no extra setup), the API key, company id and account id come from `config/services.php` (`services.beel.key`, `company_id`, `account_id`), read by the bound `Lenorix\LaravelBeel\Contracts\CredentialsResolver` (`ConfigCredentialsResolver`). Explicit arguments always win over those defaults.
+
+This is extensible: to keep the defaults somewhere else, such as a settings table or the current tenant, bind your own resolver and every `client()`, `company()` and `account()` call without explicit arguments uses it (so does `beel:retry-webhook-deliveries`):
+
+```php
+use Lenorix\LaravelBeel\Contracts\CredentialsResolver;
+
+class TenantBeelCredentials implements CredentialsResolver
+{
+    public function apiKey(): ?string
+    {
+        return tenant()?->beel_api_key;
+    }
+
+    public function accountId(): ?string
+    {
+        return tenant()?->beel_account_id;
+    }
+
+    public function companyId(): ?string
+    {
+        return tenant()?->beel_company_id;
+    }
+}
+
+// In a service provider's register():
+$this->app->bind(CredentialsResolver::class, TenantBeelCredentials::class);
+```
+
+The resolver is resolved from the container on every call, so it may read per-request state (`tenant()` here stands for your app's own tenant lookup). Returning `null` means "not available": the call then fails with a clear error unless that value is passed explicitly.
+
 Account-level resources (members, invitations, managed companies, account webhooks, email delivery history) work the same way, through `account()`:
 
 ```php
