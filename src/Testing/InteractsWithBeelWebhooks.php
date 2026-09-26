@@ -14,20 +14,22 @@ use Illuminate\Testing\TestResponse;
 trait InteractsWithBeelWebhooks
 {
     /**
-     * @param  array<string, mixed>  $data  The event's `data`.
+     * @param  array<string, mixed>|null  $data  The event's `data`; defaults to `BeelFake::webhookData($type)`.
      * @param  array<string, mixed>  $overrides  Envelope fields to set or replace (e.g. `id`, `company_id`, `test`).
      * @param  string|null  $webhookKey  Optional URL segment (/beel/webhook/{key}).
      * @param  string|null  $secret  Defaults to services.beel.webhook_secret.
      */
-    protected function postBeelWebhook(string $type, array $data = [], array $overrides = [], ?string $webhookKey = null, ?string $secret = null): TestResponse
+    protected function postBeelWebhook(string $type, ?array $data = null, array $overrides = [], ?string $webhookKey = null, ?string $secret = null): TestResponse
     {
         // A fresh id per call, so the package's deduplication doesn't swallow a test's second post.
         $payload = array_merge([
             'id' => (string) Str::uuid(),
             'type' => $type,
             'created_at' => now()->toIso8601ZuluString(),
+            'api_version' => '2025-01',
+            'livemode' => false,
             'test' => false,
-            'data' => $data,
+            'data' => $data ?? BeelFake::webhookData($type),
         ], $overrides);
 
         // Encode once and sign exactly the bytes that are sent.

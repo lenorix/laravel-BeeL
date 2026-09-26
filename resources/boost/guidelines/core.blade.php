@@ -55,6 +55,7 @@ foreach ($company->invoices->all(['limit' => 100]) as $invoice) {} // lazy itera
 ### Testing
 
 - Tests must never reach the real BeeL API. All SDK traffic goes through Laravel's HTTP client, so use `Http::fake()` and `Http::preventStrayRequests()`.
+- Build fake responses with `Lenorix\LaravelBeel\Testing\BeelFake` instead of hand-written JSON: `BeelFake::ok(BeelFake::invoice([...]))`, `BeelFake::page('customers', [BeelFake::customer()])`, `BeelFake::error(422, 'VALIDATION_ERROR')`. Faked 429/5xx are retried by the package: use `Sleep::fake()` or set `beel.http.retries` to 0.
 - To test webhook listeners, use the `Lenorix\LaravelBeel\Testing\InteractsWithBeelWebhooks` trait: `$this->postBeelWebhook('invoice.issued', $data, $overrides)` posts a correctly signed delivery with a fresh event id. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` signs the exact body you send.
 
 ### Not covered by BeeL or this package

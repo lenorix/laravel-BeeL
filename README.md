@@ -358,6 +358,24 @@ Disable the automatic route with `register_webhook_route => false` to register a
 
 Never let tests reach the real BeeL API: all SDK traffic goes through Laravel's HTTP client, so `Http::fake()` and `Http::preventStrayRequests()` cover it.
 
+`Lenorix\LaravelBeel\Testing\BeelFake` builds the responses for you, shaped like BeeL's (taken from its OpenAPI examples), so you don't hand-write envelopes, pagination or errors:
+
+```php
+use Illuminate\Support\Facades\Http;
+use Lenorix\LaravelBeel\Testing\BeelFake;
+
+Http::preventStrayRequests();
+Http::fake([
+    '*/invoices/*/issue' => BeelFake::ok(BeelFake::invoice(['id' => 'inv-1', 'status' => 'ISSUED'])),
+    '*/customers*' => BeelFake::page('customers', [BeelFake::customer(['nif' => 'B87654321'])]),
+    '*/invoices' => BeelFake::error(409, 'CONFLICT', details: ['conflict_type' => 'DUPLICATE_EXTERNAL_REF']),
+]);
+```
+
+- Responses: `ok($data)`, `page($key, $items, hasNext:, page:)`, `cursorPage($key, $items, nextCursor:)` and `error($status, $code, $message, $details, retryAfter:)`. The SDK turns `error()` into the matching `BeelApiError` subclass with `apiCode`, `details` and `requestId` (`BeelFake::REQUEST_ID`).
+- Resources (arrays; overrides merge into nested objects and replace lists whole): `invoice()`, `customer()`, `identity(scopes:)`, `issuingReadiness($blockers)`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, and `webhookData($type)` for a webhook event's `data`.
+- The package retries 429 and 5xx (`beel.http.retries`), so a faked one is requested once per attempt: call `Sleep::fake()` to skip the waits, or set `beel.http.retries` to `0`.
+
 To test your webhook listeners end to end, use the `InteractsWithBeelWebhooks` trait. It posts a correctly signed delivery (a fresh event id per call, the exact bytes it signs) to the package's endpoint:
 
 ```php
@@ -376,7 +394,7 @@ it('queues a VERI*FACTU sync when BeeL reports a status change', function () {
 });
 ```
 
-`postBeelWebhook($type, $data, $overrides, $webhookKey, $secret)` signs with `services.beel.webhook_secret` unless you pass a secret; `$overrides` sets envelope fields such as `id`, `company_id` or `test`. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` returns the `BeeL-Signature` header value for the exact body you send.
+`postBeelWebhook($type, $data, $overrides, $webhookKey, $secret)` signs with `services.beel.webhook_secret` unless you pass a secret; `$data` defaults to `BeelFake::webhookData($type)`; `$overrides` sets envelope fields such as `id`, `company_id` or `test`. For hand-built requests, `Lenorix\LaravelBeel\Testing\WebhookSignature::sign($rawBody, $secret)` returns the `BeeL-Signature` header value for the exact body you send.
 
 ## AI guidelines (Laravel Boost)
 

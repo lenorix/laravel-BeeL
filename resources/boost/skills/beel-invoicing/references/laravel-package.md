@@ -166,7 +166,12 @@ class SyncVerifactuStatus implements ShouldQueue
 
 ## Testing
 
-- `Http::preventStrayRequests()` in the base test case and `Http::fake([...])` per test. Fake BeeL's envelope: `Http::response(['data' => [...]], 200)`.
+- `Http::preventStrayRequests()` in the base test case and `Http::fake([...])` per test, with responses from `Lenorix\LaravelBeel\Testing\BeelFake` (shaped like BeeL's OpenAPI examples):
+  - `BeelFake::ok(array $data, int $status = 200)`: `{success, data, meta.request_id}`.
+  - `BeelFake::page(string $key, array $items, bool $hasNext = false, int $page = 1, int $perPage = 20)`: `data.{$key}` plus `pagination` (keys: `invoices`, `customers`, `products`, `webhooks`, `deliveries`, ...). `cursorPage($key, $items, ?$nextCursor)` for `accounts`.
+  - `BeelFake::error(int $status, string $code, ?string $message = null, array $details = [], ?int $retryAfter = null)`: surfaces as the matching `BeelApiError` subclass with `apiCode`, `details`, `requestId` = `BeelFake::REQUEST_ID`, `retryAfter`. 429 and 5xx are retried `beel.http.retries` times: `Sleep::fake()` or set retries to 0.
+  - Resource arrays, `$overrides` merged into nested objects with lists replaced whole: `invoice()` (issued, VERI*FACTU accepted), `customer()`, `identity(array $overrides = [], ?array $scopes = null)`, `issuingReadiness(array $blockers = [])`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, `webhookData(string $type)` (realistic `data` per event type, `[]` for unknown types).
+  - Use `Http::fakeSequence()` with `page(..., hasNext: true)` then a last page to test `all()` iteration.
 - Assert outgoing calls with `Http::assertSent(fn (Illuminate\Http\Client\Request $r) => $r->hasHeader('Authorization', 'Bearer ...') && str_contains($r->url(), $companyId))`.
 - Simulate transport failures with `Http::fake(fn () => throw new GuzzleHttp\Exception\ConnectException('...', new GuzzleHttp\Psr7\Request('GET', 'https://example.test')))`.
 - Signed webhook requests: use the package's test helpers instead of signing by hand.
@@ -180,6 +185,7 @@ uses(InteractsWithBeelWebhooks::class);
 // Signed with services.beel.webhook_secret, fresh event id per call (so the package's dedupe
 // doesn't swallow a second post); $overrides sets envelope fields; optional webhook key and secret.
 $this->postBeelWebhook('invoice.issued', ['invoice_id' => 'inv_1'], ['company_id' => $companyId])->assertStatus(202);
+$this->postBeelWebhook('verifactu.status.updated')->assertStatus(202); // data defaults to BeelFake::webhookData($type)
 
 // Hand-built request: sign the exact raw body you send.
 $header = WebhookSignature::sign($rawBody, $secret);
