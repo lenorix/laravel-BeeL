@@ -111,22 +111,27 @@ Event::listen(function (BeelWebhookReceived $event): void {
 
 The job downloads it in the background and waits if the PDF isn't ready yet. Dispatching it twice for the same event is harmless.
 
-If you use [Spatie Media Library](https://spatie.be/docs/laravel-medialibrary), store the PDF on a local disk first and add it from there. `storePdf()` verifies the download, which `addMediaFromUrl()` wouldn't:
+If you use [Spatie Media Library](https://spatie.be/docs/laravel-medialibrary), chain the job with the step that adds the PDF to your model. `storePdf()` verifies the download, which `addMediaFromUrl()` wouldn't:
 
 ```php
-use Lenorix\LaravelBeel\BeelManager;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Storage;
+use Lenorix\LaravelBeel\Jobs\StoreInvoicePdf;
 
-// In your own queued job:
 $path = "beel-tmp/{$invoice->beel_invoice_id}.pdf";
 
-try {
-    app(BeelManager::class)->company()->invoices->storePdf($invoice->beel_invoice_id, $path, disk: 'local', overwrite: true);
-
-    $invoice->addMediaFromDisk($path, 'local')->toMediaCollection('pdf');
-} finally {
+Bus::chain([
+    new StoreInvoicePdf($invoice->beel_invoice_id, $path, disk: 'local', overwrite: true),
+    function () use ($invoice, $path) {
+        $invoice->addMediaFromDisk($path, 'local')->toMediaCollection('pdf');
+        Storage::disk('local')->delete($path);
+    },
+])->catch(function () use ($path) {
     Storage::disk('local')->delete($path);
-}
+})->dispatch();
 ```
+
+The second step runs only once the PDF is stored, even if the job had to wait for BeeL. If your queue workers run on several servers, use a shared disk (e.g. `s3`) instead of `local`.
 
 ## Testing
 

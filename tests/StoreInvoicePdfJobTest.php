@@ -2,6 +2,7 @@
 
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Http\Client\Request as ClientRequest;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -126,4 +127,38 @@ it('queues the PDF from the invoice.pdf.generated webhook, as the README shows',
         && $job->path === 'invoices/f47ac10b-58cc-4372-a567-0e02b2c3d479.pdf'
         && $job->disk === 's3'
         && $job->companyId === 'company-7');
+});
+
+it('runs the next step of a chain only once the PDF is stored, as the README shows', function () {
+    config()->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+    fakeJobPdfApi();
+
+    Bus::chain([
+        new StoreInvoicePdf('inv-1', 'beel-tmp/inv-1.pdf', disk: 'invoices', overwrite: true),
+        function () {
+            // Stands in for addMediaFromDisk(): the file is there when this step runs.
+            Storage::disk('invoices')->move('beel-tmp/inv-1.pdf', 'media/inv-1.pdf');
+        },
+    ])->catch(function () {
+        Storage::disk('invoices')->delete('beel-tmp/inv-1.pdf');
+    })->dispatch();
+
+    expect(Storage::disk('invoices')->get('media/inv-1.pdf'))->toBe('%PDF-queued')
+        ->and(Storage::disk('invoices')->allFiles())->toBe(['media/inv-1.pdf']);
+});
+
+it('stops the chain, cleaning up, when the PDF can not be stored', function () {
+    config()->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+    fakeJobPdfApi(BeelFake::error(400, 'INVOICE_NOT_ISSUED_NO_PDF'));
+
+    Bus::chain([
+        new StoreInvoicePdf('inv-1', 'beel-tmp/inv-1.pdf', disk: 'invoices', overwrite: true),
+        function () {
+            throw new LogicException('must not run');
+        },
+    ])->catch(function () {
+        Storage::disk('invoices')->delete('beel-tmp/inv-1.pdf');
+    })->dispatch();
+
+    expect(Storage::disk('invoices')->allFiles())->toBe([]);
 });
