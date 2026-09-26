@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-First release. Requires PHP 8.4+, Laravel 12 or 13, and `lenorix/beel-sdk` 0.3+.
+First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.3+.
 
 ### Added
 

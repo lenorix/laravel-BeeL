@@ -441,7 +441,7 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 ## Requirements
 
 - PHP 8.4+
-- Laravel 12 or 13
+- Laravel 13
 - `lenorix/beel-sdk` 0.3+
 
 ## License
