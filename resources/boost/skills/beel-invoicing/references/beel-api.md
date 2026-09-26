@@ -69,7 +69,8 @@ Summarised from https://docs.beel.es (llms-full.txt and the OpenAPI spec at http
 - Representation: `POST /v1/companies/{company_id}/representation`, download, holder signs digitally, submit, poll; production AEAT submission for that NIF is blocked until signed. Sandbox issues immediately. Check `GET /v1/companies/{id}/issuing-readiness`.
 - End management: `DELETE /v1/accounts/{id}/management` stops billing from the next cycle. Re-provisioning the same email reactivates an unclaimed account; a claimed one returns `409 PROVISIONING_ACCOUNT_CLAIMED` (needs the holder's consent).
 - Billing: the provisioner pays every account it provisioned, claimed or not, empty or not; `GET /v1/accounts/{id}/usage` counts `nifs` as billable units. End management of accounts you no longer use.
-- Provisioner-only webhook events: `account.claimed`, `company.created`, `representation.signed` (subscribe with an integrator key; `BeelWebhookSubscriptions::defaultEvents()` leaves them out, pass `events:` explicitly).
+- Webhooks for managed accounts: a subscription's `account_relationship` is `own` (default, only your account), `managed` (accounts you provisioned, if the management relationship grants data visibility; billing-only doesn't) or `all`. Delivered events carry `account_relationship` (`own`/`managed`), `account_id` and `account_external_ref` to route on.
+- Provisioner-only webhook events: `account.claimed`, `company.created`, `representation.signed` (`BeelWebhookSubscriptions::defaultEvents()` leaves them out; pass `events: allEvents()` or `--provisioner-events`).
 - `default_irpf_rate` has no default. Never preselect an IRPF rate for a customer's company: absent (not declared) is not the same as `0` (declared exempt).
 
 ## Invoice lifecycle

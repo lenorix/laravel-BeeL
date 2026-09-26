@@ -103,10 +103,28 @@ it('warns an integrator key whose subscription misses the integrator events', fu
 it('does not warn an integrator key subscribed to the integrator events', function () {
     fakeBeelCheckApi([
         'scopes' => ['accounts:read', 'webhooks:read', 'webhooks:write'],
-        'subscriptions' => [['id' => 'wh-1', 'url' => 'https://app.test/beel/webhook', 'events' => ['invoice.issued', 'account.claimed', 'company.created', 'representation.signed'], 'active' => true, 'created_at' => now()->format(DATE_ATOM)]],
+        'subscriptions' => [['id' => 'wh-1', 'url' => 'https://app.test/beel/webhook', 'events' => ['invoice.issued', 'account.claimed', 'company.created', 'representation.signed'], 'account_relationship' => 'all', 'active' => true, 'created_at' => now()->format(DATE_ATOM)]],
     ]);
 
-    $this->artisan('beel:check')->doesntExpectOutputToContain('integrator events')->assertSuccessful();
+    $this->artisan('beel:check')
+        ->doesntExpectOutputToContain('integrator events')
+        ->doesntExpectOutputToContain('only receives events from your own account')
+        ->assertSuccessful();
+});
+
+it('warns an integrator whose subscription only receives its own account events', function () {
+    fakeBeelCheckApi([
+        'scopes' => ['accounts:read', 'webhooks:read', 'webhooks:write'],
+        'subscriptions' => [['id' => 'wh-1', 'url' => 'https://app.test/beel/webhook', 'events' => ['invoice.issued'], 'account_relationship' => 'own', 'active' => true, 'created_at' => now()->format(DATE_ATOM)]],
+    ]);
+
+    $this->artisan('beel:check')->expectsOutputToContain('--account-relationship=all')->assertSuccessful();
+});
+
+it('recognizes an integrator key even without webhook scopes', function () {
+    fakeBeelCheckApi(['scopes' => ['accounts:read']]);
+
+    $this->artisan('beel:check')->expectsOutputToContain('integrator scopes')->assertSuccessful();
 });
 
 it('says nothing about integrator events to a regular key', function () {

@@ -48,6 +48,9 @@ final class CheckCommand extends Command
         $identity = $this->identity($beel);
 
         if ($identity !== null) {
+            if (self::isIntegrator($identity)) {
+                $this->note('The API key has the integrator scopes (accounts:*): it manages provisioned accounts.');
+            }
             $this->checkAccount($identity, $credentials->accountId());
             $this->checkCompany($manager, $credentials->companyId());
             $this->checkWebhooks($manager, $identity);
@@ -86,6 +89,11 @@ final class CheckCommand extends Command
         $this->ok("API key works: account {$identity->getAccountId()}, environment {$credential->getEnvironment()}.");
 
         return $identity;
+    }
+
+    private static function isIntegrator(MyIdentity $identity): bool
+    {
+        return array_intersect(['accounts:read', 'accounts:write'], $identity->getCredential()->getScopes()) !== [];
     }
 
     private function checkAccount(MyIdentity $identity, ?string $accountId): void
@@ -169,10 +177,11 @@ final class CheckCommand extends Command
             }
         }
 
-        if (array_intersect(['accounts:read', 'accounts:write'], $scopes) !== []) {
-            $this->note('The API key has the integrator scopes (accounts:*): it manages provisioned accounts.');
-
+        if (self::isIntegrator($identity)) {
             foreach ($matching as $subscription) {
+                if ($subscription->isInitialized('accountRelationship') && $subscription->getAccountRelationship() === 'own') {
+                    $this->warn_("Webhook subscription {$subscription->getId()} only receives events from your own account (account_relationship own), not from the accounts you manage; subscribe with --account-relationship=all if the app needs them.");
+                }
                 $missingEvents = array_values(array_diff(BeelWebhookSubscriptions::PROVISIONER_EVENTS, $subscription->getEvents()));
                 if ($missingEvents !== []) {
                     $this->warn_("Webhook subscription {$subscription->getId()} does not receive the integrator events ".implode(', ', $missingEvents).'; subscribe with --provisioner-events if the app needs them.');

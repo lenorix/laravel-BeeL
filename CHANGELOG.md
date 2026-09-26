@@ -31,7 +31,11 @@ First release. Requires PHP 8.4+, Laravel 12 or 13, and `lenorix/beel-sdk` 0.3+.
   - Checks one account by default. Bind `Contracts\WebhookRetryAccounts` to check several, each with its own key.
   - Optional automatic scheduling (`webhook_delivery_retry.schedule`, plus `on_one_server`).
   - The API key needs the `webhooks:read` and `webhooks:write` scopes.
-- Integrator support: `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events, and `beel:check` recognizes an integrator key (`accounts:*`) and warns when its subscription misses those events.
+- Integrator support:
+  - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.
+  - `subscribe(accountRelationship:)` and `--account-relationship` receive events from the accounts you manage (`managed` or `all`; BeeL's default is `own`). `BeelWebhookSubscription` exposes `accountRelationship`.
+  - `BeelWebhookReceived` exposes `accountRelationship` and `accountExternalRef`.
+  - `beel:check` recognizes an integrator key (`accounts:*`) and warns when a subscription misses the provisioner events or only receives its own account's events.
 - `BeelWebhookSubscriptions`, to create, rotate, find or delete webhook subscriptions programmatically (e.g. one per tenant): the secret is handed only to a `store` callback, a created subscription is deleted if storing fails, and a rotated secret that can't be stored travels in `RotatedWebhookSecretNotStored::$secret`.
 - `php artisan beel:webhook:subscribe`, which creates this app's webhook subscription (or rotates its secret with `--rotate`) and writes the secret to `.env` in place (keeping owner, mode and symlinks), without printing it.
 - `php artisan beel:check`, a read-only diagnosis of the key, account, company readiness, key scopes, webhook subscription, webhook secret and dedupe cache store.

@@ -22,7 +22,7 @@ function fakeSubscriptionsApi(array $existing = [], string $secret = 'whsec_new'
 {
     Http::fake(function (ClientRequest $request) use ($existing, $secret, $deleteFails, $account) {
         $path = parse_url($request->url(), PHP_URL_PATH);
-        $sub = fn (string $id, string $url) => ['id' => $id, 'url' => $url, 'events' => ['invoice.issued'], 'active' => true, 'created_at' => now()->format(DATE_ATOM), 'secret' => $secret];
+        $sub = fn (string $id, string $url) => ['id' => $id, 'url' => $url, 'events' => ['invoice.issued'], 'account_relationship' => $request['account_relationship'] ?? 'own', 'active' => true, 'created_at' => now()->format(DATE_ATOM), 'secret' => $secret];
 
         return match (true) {
             $request->method() === 'GET' && str_ends_with($path, "/accounts/{$account}/webhooks") => Http::response(['success' => true, 'data' => ['webhooks' => $existing, 'pagination' => ['current_page' => 1, 'total_pages' => 1, 'total_items' => count($existing), 'items_per_page' => 100, 'has_next' => false, 'has_previous' => false]]], 200),
@@ -176,4 +176,23 @@ it('offers every event for integrators and leaves the integrator-only ones out b
     expect($subscriptions->allEvents())->toContain('invoice.issued', ...BeelWebhookSubscriptions::PROVISIONER_EVENTS)
         ->and(array_intersect($subscriptions->defaultEvents(), BeelWebhookSubscriptions::PROVISIONER_EVENTS))->toBe([])
         ->and(count($subscriptions->defaultEvents()) + 3)->toBe(count($subscriptions->allEvents()));
+});
+
+it('subscribes an integrator to the accounts it manages', function () {
+    fakeSubscriptionsApi();
+
+    $subscription = app(BeelWebhookSubscriptions::class)->subscribe(store: fn () => null, webhookKey: 'tenant-a', accountRelationship: 'managed');
+
+    expect($subscription->accountRelationship)->toBe('managed');
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && $r['account_relationship'] === 'managed');
+});
+
+it('leaves the account relationship to BeeL by default and refuses unknown ones', function () {
+    fakeSubscriptionsApi();
+    $subscriptions = app(BeelWebhookSubscriptions::class);
+
+    expect($subscriptions->subscribe(store: fn () => null, webhookKey: 'tenant-a')->accountRelationship)->toBe('own')
+        ->and(fn () => $subscriptions->subscribe(store: fn () => null, webhookKey: 'tenant-b', accountRelationship: 'everyone'))->toThrow(InvalidArgumentException::class);
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && ! isset($r['account_relationship']));
+    Http::assertSentCount(2);
 });

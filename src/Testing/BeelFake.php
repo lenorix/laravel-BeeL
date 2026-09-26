@@ -223,6 +223,7 @@ final class BeelFake
             'id' => '5d6e7f80-91a2-4b3c-8d4e-5f60718293a4',
             'url' => 'https://app.test/beel/webhook',
             'events' => ['invoice.issued', 'verifactu.status.updated'],
+            'account_relationship' => 'own',
             'active' => true,
             'consecutive_failures' => 0,
             'created_at' => '2025-01-10T09:00:00Z',

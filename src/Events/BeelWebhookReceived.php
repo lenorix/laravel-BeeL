@@ -16,6 +16,12 @@ final class BeelWebhookReceived
     /** BeeL account UUID the event belongs to, when the event carries one. */
     public readonly ?string $accountId;
 
+    /** `own` when the event happened in your account, `managed` in an account you provisioned (integrators). */
+    public readonly ?string $accountRelationship;
+
+    /** Your `external_ref` for the managed account the event belongs to, for integrators. */
+    public readonly ?string $accountExternalRef;
+
     private ?WebhookEvent $typed = null;
 
     /**
@@ -38,6 +44,12 @@ final class BeelWebhookReceived
 
         $accountId = $payload['account_id'] ?? null;
         $this->accountId = is_string($accountId) ? $accountId : null;
+
+        $relationship = $payload['account_relationship'] ?? null;
+        $this->accountRelationship = is_string($relationship) ? $relationship : null;
+
+        $externalRef = $payload['account_external_ref'] ?? null;
+        $this->accountExternalRef = is_string($externalRef) ? $externalRef : null;
     }
 
     /**

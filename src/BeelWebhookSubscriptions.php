@@ -26,6 +26,8 @@ final class BeelWebhookSubscriptions
     /** Only sent to the account that provisioned a managed account. */
     public const PROVISIONER_EVENTS = ['account.claimed', 'company.created', 'representation.signed'];
 
+    public const ACCOUNT_RELATIONSHIPS = ['own', 'managed', 'all'];
+
     public function __construct(private BeelManager $manager) {}
 
     /** The webhook URL for a key: APP_URL + beel.webhook_path [+ '/' + key]. */
@@ -61,11 +63,18 @@ final class BeelWebhookSubscriptions
      *
      * @param  callable(string): mixed  $store
      * @param  list<string>|null  $events  Defaults to defaultEvents().
+     * @param  string|null  $accountRelationship  Which accounts it receives events from: `own` (BeeL's default),
+     *                                            `managed` (accounts you provisioned) or `all`. Integrators
+     *                                            need `managed` or `all` to hear from their accounts.
      *
      * @throws WebhookSubscriptionAlreadyExists
      */
-    public function subscribe(callable $store, ?string $webhookKey = null, ?array $events = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null): BeelWebhookSubscription
+    public function subscribe(callable $store, ?string $webhookKey = null, ?array $events = null, ?string $url = null, ?string $apiKey = null, ?string $accountId = null, ?string $accountRelationship = null): BeelWebhookSubscription
     {
+        if ($accountRelationship !== null && ! in_array($accountRelationship, self::ACCOUNT_RELATIONSHIPS, true)) {
+            throw new \InvalidArgumentException('The account relationship must be one of: '.implode(', ', self::ACCOUNT_RELATIONSHIPS).'.');
+        }
+
         $url = $this->validatedUrl($url ?? $this->url($webhookKey));
         $account = $this->manager->account(apiKey: $apiKey, accountId: $accountId);
 
@@ -74,9 +83,11 @@ final class BeelWebhookSubscriptions
             throw new WebhookSubscriptionAlreadyExists($existing->getId(), $existing->getUrl());
         }
 
-        $created = $account->webhooks->create(
-            (new CreateWebhookSubscriptionRequest)->setUrl($url)->setEvents($events ?? $this->defaultEvents()),
-        );
+        $request = (new CreateWebhookSubscriptionRequest)->setUrl($url)->setEvents($events ?? $this->defaultEvents());
+        if ($accountRelationship !== null) {
+            $request->setAccountRelationship($accountRelationship);
+        }
+        $created = $account->webhooks->create($request);
 
         try {
             $store($created->getSecret());

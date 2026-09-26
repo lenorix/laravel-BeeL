@@ -97,6 +97,22 @@ it('adds the integrator events with --provisioner-events', function () {
         && $r['events'] === ['invoice.issued', 'account.claimed', 'company.created', 'representation.signed']);
 });
 
+it('subscribes to managed accounts with --account-relationship', function () {
+    fakeBeelSubscriptionApi();
+
+    $this->artisan('beel:webhook:subscribe', ['--account-relationship' => 'all'])->assertSuccessful();
+
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && $r['account_relationship'] === 'all');
+});
+
+it('refuses an unknown account relationship before calling BeeL', function () {
+    fakeBeelSubscriptionApi();
+
+    $this->artisan('beel:webhook:subscribe', ['--account-relationship' => 'mine'])->expectsOutputToContain('own, managed, all')->assertFailed();
+
+    Http::assertNothingSent();
+});
+
 it('refuses to create a second subscription for the same URL', function () {
     fakeBeelSubscriptionApi([existingSubscription()]);
 

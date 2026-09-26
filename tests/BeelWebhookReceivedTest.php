@@ -126,3 +126,11 @@ it('stays serializable for queued listeners after typing', function () {
 
     expect($copy->typed()->getData()->getInvoiceId())->toBe('f47ac10b-58cc-4372-a567-0e02b2c3d479');
 });
+
+it('exposes the account relationship and external ref for integrators', function () {
+    $event = webhookEvent('invoice.issued', BeelFake::webhookData('invoice.issued'), ['account_relationship' => 'managed', 'account_external_ref' => 'acct-2041']);
+
+    expect($event->accountRelationship)->toBe('managed')
+        ->and($event->accountExternalRef)->toBe('acct-2041')
+        ->and(webhookEvent('invoice.issued', [])->accountRelationship)->toBeNull();
+});

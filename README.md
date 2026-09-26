@@ -150,7 +150,8 @@ use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Support\Facades\Event;
 
 Event::listen(function (ResponseReceived $event): void {
-    if ($event->request->toPsrRequest()->getUri()->getHost() !== 'app.beel.es') {
+    $beelHost = parse_url(config('services.beel.base_url', 'https://app.beel.es/api'), PHP_URL_HOST);
+    if ($event->request->toPsrRequest()->getUri()->getHost() !== $beelHost) {
         return;
     }
 
@@ -175,6 +176,7 @@ use Lenorix\LaravelBeel\Events\BeelWebhookReceived;
 
 Event::listen(BeelWebhookReceived::class, function (BeelWebhookReceived $event): void {
     // $event->id, $event->type, $event->data, $event->payload, $event->companyId, $event->accountId, $event->webhookKey, $event->isTest()
+    // Integrators: $event->accountRelationship ('own' or 'managed') and $event->accountExternalRef (your external_ref)
 });
 ```
 
@@ -330,7 +332,7 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 - refuses when the app would not read what it writes: a custom `WebhookSecretResolver` is bound, or `services.beel.webhook_secret` reads a different variable than `--env-key`;
 - writes `.env` in place with a file lock, like `php artisan key:generate`: other lines, the file's owner, group and mode are kept, and a symlinked `.env` (zero-downtime deploys) is written through to the shared file instead of being replaced. If it still can't save a newly created subscription's secret, it deletes that subscription so nothing is left half-configured. After `--rotate` the old secret is already invalid, so in that one case it prints the new secret once as the only way to recover.
 
-It subscribes every event except the integrator-only ones (`--event=` to choose; `--provisioner-events` adds `account.claimed`, `company.created` and `representation.signed` for integrator keys), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps use `BeelWebhookSubscriptions` (below) with their own storage.
+It subscribes every event except the integrator-only ones (`--event=` to choose; for integrator keys, `--provisioner-events` adds `account.claimed`, `company.created` and `representation.signed`, and `--account-relationship=all` or `managed` receives events from the accounts you manage), needs the `webhooks:write` scope, and reminds you to re-run `config:cache` and restart Octane, queue workers or Horizon. BeeL sends a test delivery while creating the subscription, before the secret is saved, so that first one is expected to fail. The command is for a single app; multi-tenant apps use `BeelWebhookSubscriptions` (below) with their own storage.
 
 ### One secret per tenant (optional)
 
@@ -377,7 +379,7 @@ $subscriptions->find(webhookKey: $tenant->webhook_key, apiKey: $tenant->beel_api
 $subscriptions->unsubscribe(webhookKey: $tenant->webhook_key, apiKey: $tenant->beel_api_key, accountId: $tenant->beel_account_id); // bool
 ```
 
-- `subscribe()` subscribes every event except the integrator-only ones unless you pass `events:` (integrators: `events: $subscriptions->allEvents()`), and throws `WebhookSubscriptionAlreadyExists` instead of creating a second subscription for the same URL (trailing slash ignored), which would sign with a secret the app can't verify.
+- `subscribe()` subscribes every event except the integrator-only ones unless you pass `events:` (integrators: `events: $subscriptions->allEvents()` and `accountRelationship: 'all'` or `'managed'`, since BeeL defaults to `own`, only your account's events), and throws `WebhookSubscriptionAlreadyExists` instead of creating a second subscription for the same URL (trailing slash ignored), which would sign with a secret the app can't verify.
 - If `store` throws after a create, the new subscription is deleted and the exception rethrown, so no subscription is left whose secret nobody has. If that delete fails too, `WebhookSubscriptionOrphaned` (with `subscriptionId`) tells you to delete it by hand.
 - `rotate()` uses BeeL's rotation, which invalidates the old secret immediately. If `store` throws, `RotatedWebhookSecretNotStored` carries the new secret in `$secret` (never in its message): it is the only copy left, so persist it from there. It throws `WebhookSubscriptionNotFound` if there's nothing to rotate.
 - URLs must be HTTPS; `url()` builds the one for a key, and every method also accepts an explicit `url:`. The API key needs `webhooks:read` and `webhooks:write`.

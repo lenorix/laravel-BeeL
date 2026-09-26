@@ -29,6 +29,7 @@ final class WebhookSubscribeCommand extends Command
         {--url= : Webhook URL (defaults to APP_URL + beel.webhook_path)}
         {--event=* : Event types to subscribe to (defaults to every non-provisioner event)}
         {--provisioner-events : Also subscribe to the integrator-only events (account.claimed, company.created, representation.signed)}
+        {--account-relationship= : Which accounts to receive events from: own (default), managed or all (integrators)}
         {--env-key=BEEL_WEBHOOK_SECRET : .env key that receives the signing secret}
         {--rotate : Rotate the secret of the existing subscription for this URL instead of creating one}
         {--force : Run in production without asking}';
@@ -48,6 +49,12 @@ final class WebhookSubscribeCommand extends Command
         // Everything that can fail without BeeL is checked first: a secret BeeL returns can't be read again.
         if (filter_var($url, FILTER_VALIDATE_URL) === false || ! str_starts_with($url, 'https://')) {
             $this->error("The webhook URL must be an absolute HTTPS URL; got {$url}. Set APP_URL or pass --url.");
+
+            return self::FAILURE;
+        }
+        $relationship = $this->stringOption('account-relationship');
+        if ($relationship !== null && ! in_array($relationship, BeelWebhookSubscriptions::ACCOUNT_RELATIONSHIPS, true)) {
+            $this->error('--account-relationship must be one of: '.implode(', ', BeelWebhookSubscriptions::ACCOUNT_RELATIONSHIPS).'.');
 
             return self::FAILURE;
         }
@@ -101,7 +108,7 @@ final class WebhookSubscribeCommand extends Command
     private function create(BeelWebhookSubscriptions $subscriptions, string $url, \Closure $store, string $envKey, ?\Throwable &$saveFailure): int
     {
         try {
-            $subscription = $subscriptions->subscribe($store, url: $url, events: $this->events($subscriptions));
+            $subscription = $subscriptions->subscribe($store, url: $url, events: $this->events($subscriptions), accountRelationship: $this->stringOption('account-relationship'));
         } catch (WebhookSubscriptionAlreadyExists $exception) {
             // A second subscription would sign with another secret, so its deliveries would fail verification.
             $this->error("Subscription {$exception->subscriptionId} already delivers to {$url}. Use --rotate to replace its secret.");
