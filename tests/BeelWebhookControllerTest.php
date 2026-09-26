@@ -229,3 +229,15 @@ it('tells listeners which webhook key verified the event', function () {
     Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === 'tenant-a');
     Event::assertDispatched(BeelWebhookReceived::class, fn (BeelWebhookReceived $event) => $event->webhookKey === null);
 });
+
+it('treats the bare path and any segment the same with the default config resolver', function () {
+    Event::fake();
+
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $signature = signBeelPayload($payload, 'test-webhook-secret');
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+    $this->postJson('/beel/webhook/anything', $payload, ['BeeL-Signature' => $signature])->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, 2);
+});

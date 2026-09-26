@@ -15,9 +15,10 @@ final class BeelWebhookReceived
     /**
      * @param  string  $id  BeeL's event id. BeeL may redeliver the same event, so use this to deduplicate.
      * @param  array<string, mixed>  $payload
-     * @param  string|null  $webhookKey  The optional URL segment the delivery arrived on (/beel/webhook/{key}),
-     *                                   i.e. whose secret verified it. In multi-tenant setups identify the
-     *                                   tenant by this, not by companyId/accountId from the payload.
+     * @param  string|null  $webhookKey  The optional URL segment the delivery arrived on (/beel/webhook/{key}).
+     *                                   It identifies the tenant only when the bound WebhookSecretResolver
+     *                                   returns a distinct secret per key and null for unknown keys; then
+     *                                   prefer it over companyId/accountId from the payload.
      */
     public function __construct(
         public readonly string $id,

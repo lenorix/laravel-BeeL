@@ -225,7 +225,7 @@ $this->app->bind(WebhookRetryAccounts::class, TenantWebhookRetryAccounts::class)
 
 ### One secret per tenant (optional)
 
-By default the secret comes from `services.beel.webhook_secret`, read by the bound `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` (`ConfigWebhookSecretResolver`). If several BeeL accounts or tenants send webhooks to the same app, each subscription has its own secret. The route accepts an optional trailing segment, `/beel/webhook/{beelWebhookKey}`, so each subscription can point at its own URL, and your resolver picks the secret from it:
+By default the secret comes from `services.beel.webhook_secret`, read by the bound `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` (`ConfigWebhookSecretResolver`). If several BeeL accounts or tenants send webhooks to the same app, each subscription has its own secret. The route accepts an optional trailing segment, `/beel/webhook/{beelWebhookKey}`, so each subscription can point at its own URL. The package never interprets that segment: the controller treats `/beel/webhook` and `/beel/webhook/{anything}` the same and lets the resolver decide. The default resolver ignores it, so both URLs use the config secret. A per-tenant resolver picks the secret from it:
 
 ```php
 use Illuminate\Http\Request;
@@ -250,7 +250,7 @@ $this->app->bind(WebhookSecretResolver::class, TenantWebhookSecrets::class);
 
 Build each tenant's URL with `route('beel.webhook', ['beelWebhookKey' => $tenant->webhook_key])` when creating its BeeL subscription. Returning `null` answers 503 (BeeL retries), and a signature that doesn't match the secret you return answers 503 as well. `/beel/webhook` without a segment keeps working, with `$request->route('beelWebhookKey')` being `null`.
 
-Pick the secret only from the URL or other request metadata you control, never from the unverified payload: a tenant who knows its own secret could sign a payload carrying another tenant's `company_id` or `account_id`. For the same reason, **your listeners must identify the tenant by `$event->webhookKey`** (the URL segment whose secret verified the delivery), not by `$event->companyId` or `$event->accountId`, and should ignore events whose `companyId`/`accountId` don't belong to that tenant.
+Pick the secret only from the URL or other request metadata you control, never from the unverified payload: a tenant who knows its own secret could sign a payload carrying another tenant's `company_id` or `account_id`. For the same reason, **your listeners must identify the tenant by `$event->webhookKey`** (the URL segment the delivery arrived on), not by `$event->companyId` or `$event->accountId`, and should ignore events whose `companyId`/`accountId` don't belong to that tenant. This holds only if your resolver returns a distinct secret per key and `null` for unknown or missing keys, as above: with the default resolver, or one that falls back to a shared secret, any segment is accepted with that secret and `webhookKey` is just a label, not a verified tenant.
 
 A tenant-aware `CredentialsResolver` (one that reads the current request or authenticated tenant) returns `null` in queued listeners and scheduled commands, where there is no request. Queued webhook listeners should pass explicit credentials looked up from `$event->webhookKey`, and such apps must also bind `WebhookRetryAccounts` so the scheduled retry command knows which accounts to check.
 
