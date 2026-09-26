@@ -41,6 +41,12 @@ abstract class BeelWebhookEvent
         return $class === null ? null : new $class($webhook);
     }
 
+    /** The SDK hydrated `data` into another model than this type's: the payload doesn't match BeeL's schema. */
+    protected function unexpectedData(mixed $data): \UnexpectedValueException
+    {
+        return new \UnexpectedValueException("BeeL webhook {$this->webhook->id} ({$this->webhook->type}) has data of type ".get_debug_type($data).'.');
+    }
+
     /** @return list<string> Every webhook type that has its own event class. */
     public static function types(): array
     {

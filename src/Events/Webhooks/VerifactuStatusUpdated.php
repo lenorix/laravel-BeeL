@@ -11,7 +11,8 @@ final class VerifactuStatusUpdated extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataVeriFactuStatusUpdated
     {
-        /** @var WebhookEventDataVeriFactuStatusUpdated */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataVeriFactuStatusUpdated ? $data : throw $this->unexpectedData($data);
     }
 }

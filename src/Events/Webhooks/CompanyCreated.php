@@ -11,7 +11,8 @@ final class CompanyCreated extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataCompanyCreated
     {
-        /** @var WebhookEventDataCompanyCreated */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataCompanyCreated ? $data : throw $this->unexpectedData($data);
     }
 }

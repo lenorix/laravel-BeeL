@@ -11,7 +11,8 @@ final class RecurringInvoicePaused extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataRecurringInvoicePaused
     {
-        /** @var WebhookEventDataRecurringInvoicePaused */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataRecurringInvoicePaused ? $data : throw $this->unexpectedData($data);
     }
 }

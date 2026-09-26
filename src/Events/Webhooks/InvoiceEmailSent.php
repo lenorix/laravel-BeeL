@@ -11,7 +11,8 @@ final class InvoiceEmailSent extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataInvoiceEmailSent
     {
-        /** @var WebhookEventDataInvoiceEmailSent */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataInvoiceEmailSent ? $data : throw $this->unexpectedData($data);
     }
 }

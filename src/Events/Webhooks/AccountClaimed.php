@@ -11,7 +11,8 @@ final class AccountClaimed extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataAccountClaimed
     {
-        /** @var WebhookEventDataAccountClaimed */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataAccountClaimed ? $data : throw $this->unexpectedData($data);
     }
 }

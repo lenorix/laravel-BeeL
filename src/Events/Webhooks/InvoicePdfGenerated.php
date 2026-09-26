@@ -11,7 +11,8 @@ final class InvoicePdfGenerated extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataInvoicePdfGenerated
     {
-        /** @var WebhookEventDataInvoicePdfGenerated */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataInvoicePdfGenerated ? $data : throw $this->unexpectedData($data);
     }
 }

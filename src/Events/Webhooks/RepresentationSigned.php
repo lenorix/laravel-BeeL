@@ -11,7 +11,8 @@ final class RepresentationSigned extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataRepresentationSigned
     {
-        /** @var WebhookEventDataRepresentationSigned */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataRepresentationSigned ? $data : throw $this->unexpectedData($data);
     }
 }

@@ -11,7 +11,8 @@ final class InvoiceScheduleFailed extends BeelWebhookEvent
 {
     public function data(): WebhookEventDataInvoiceScheduleFailed
     {
-        /** @var WebhookEventDataInvoiceScheduleFailed */
-        return $this->webhook->typed()->getData();
+        $data = $this->webhook->typed()->getData();
+
+        return $data instanceof WebhookEventDataInvoiceScheduleFailed ? $data : throw $this->unexpectedData($data);
     }
 }
