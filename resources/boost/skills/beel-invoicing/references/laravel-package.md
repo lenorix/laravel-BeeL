@@ -60,13 +60,14 @@ Flow of `POST /beel/webhook`:
 
 1. Header pre-filter, before the secret or body is touched: a missing header, no numeric `t`, no `v1` shaped like a lowercase SHA-256 hex digest, or a timestamp outside `webhook_replay_tolerance_seconds` returns `401`.
 2. `WebhookSecretResolver::resolve($request)` (default: `services.beel.webhook_secret`). No secret returns `503`, which BeeL retries.
-3. `Lenorix\BeelSdk\Webhook\WebhookVerifier::verify()` checks the HMAC over the exact raw body; failure returns `401`.
+3. `Lenorix\BeelSdk\Webhook\WebhookVerifier::verify()` checks the HMAC over the exact raw body. A mismatch returns a retryable `503` (a header this well-formed but wrong usually means the secret was just rotated, and BeeL invalidates the old one immediately); any other verification failure (malformed JSON body) returns a non-retryable `401`.
 4. The decoded payload must have string `id`, string `type` and array `data`, else `400`.
 5. Responds `202` and dispatches `BeelWebhookReceived($id, $type, $data, $payload)` via `defer()`, after the response is sent.
 
 Notes:
 
 - No rate limiting on purpose: BeeL does not retry 4xx responses, so throttling would drop legitimate events. Do not add throttle, auth or CSRF middleware to this route.
+- The 503-vs-401 split for step 3 is decided by `WebhookVerifier`'s exact exception message, since it carries no error code. If a `lenorix/beel-sdk` update changes that wording, the controller safely falls back to `401`.
 - The route skips `TrimStrings` and `ConvertEmptyStringsToNull` so the body is not parsed before verification.
 - `defer()` protects the response time only. A listener that throws inside it is reported and not retried; use `ShouldQueue` listeners for anything that must not be lost.
 - Custom secrets per tenant: bind your own `Lenorix\LaravelBeel\Contracts\WebhookSecretResolver` and resolve from trusted metadata (a route parameter, host, or a dedicated path per tenant), never from the unverified body.

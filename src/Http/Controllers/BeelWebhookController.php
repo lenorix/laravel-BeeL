@@ -32,7 +32,18 @@ final class BeelWebhookController
 
         try {
             $payload = (new WebhookVerifier($secret, $tolerance))->verify($request->getContent(), $signature);
-        } catch (WebhookVerificationError) {
+        } catch (WebhookVerificationError $exception) {
+            // The header already looks like BeeL's (checked above), so a mismatch here is most
+            // likely a secret that was just rotated: BeeL invalidates the old one immediately, and
+            // a non-retried 401 would drop every delivery for the rest of the deploy. Answer with a
+            // retryable 503 instead, so BeeL's redelivery (5 attempts, up to ~75s) covers the gap.
+            // A malformed body isn't fixed by retrying, so it keeps the non-retryable 401.
+            // This distinguishes the two by WebhookVerifier's exact message text, pinned by a test;
+            // if lenorix/beel-sdk ever changes it, this safely falls back to the previous 401.
+            if ($exception->getMessage() === 'Invalid BeeL webhook signature.') {
+                return new JsonResponse(['message' => 'BeeL webhook signature does not match the configured secret.'], 503);
+            }
+
             return self::invalidSignature();
         }
 

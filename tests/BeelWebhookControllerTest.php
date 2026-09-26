@@ -35,13 +35,33 @@ it('dispatches the event and responds 202 for a validly signed webhook', functio
     });
 });
 
-it('rejects a webhook with an invalid signature', function () {
+it('responds 503 for a plausible signature that does not match the secret', function () {
     Event::fake();
 
+    // A header this well-formed but wrong is the signature of a secret that was just rotated: BeeL
+    // invalidates the old secret immediately, so retryable 503s cover the deploy window instead of
+    // permanently dropping the delivery, which is what a non-retried 401 would do.
     $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
     $signature = signBeelPayload($payload, 'wrong-secret');
 
     $response = $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => $signature]);
+
+    $response->assertStatus(503);
+    Event::assertNotDispatched(BeelWebhookReceived::class);
+});
+
+it('rejects a validly signed but non-JSON body with 401, not 503', function () {
+    Event::fake();
+
+    // A body-level problem is not fixed by BeeL retrying: it stays a non-retryable 401.
+    $body = 'not-json';
+    $timestamp = time();
+    $signature = 't='.$timestamp.',v1='.hash_hmac('sha256', $timestamp.'.'.$body, 'test-webhook-secret');
+
+    $response = $this->call('POST', '/beel/webhook', server: [
+        'HTTP_BeeL-Signature' => $signature,
+        'CONTENT_TYPE' => 'application/json',
+    ], content: $body);
 
     $response->assertStatus(401);
     Event::assertNotDispatched(BeelWebhookReceived::class);
