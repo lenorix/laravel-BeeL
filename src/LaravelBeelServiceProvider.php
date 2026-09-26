@@ -3,9 +3,11 @@
 namespace Lenorix\LaravelBeel;
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
+use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
@@ -50,6 +52,15 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
             }
         });
 
+        // Adds BeeL's request id, error code and status to the log context of any reported exception
+        // caused by a BeeL API error (also when the app wrapped it), so a log line is enough to ask
+        // BeeL support about a failed call.
+        $this->callAfterResolving(ExceptionHandler::class, function (ExceptionHandler $handler): void {
+            if (method_exists($handler, 'buildContextUsing')) {
+                $handler->buildContextUsing(static fn (\Throwable $exception): array => self::beelErrorContext($exception));
+            }
+        });
+
         if (! config('beel.register_webhook_route', true)) {
             return;
         }
@@ -61,5 +72,21 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
 
         TrimStrings::skipWhen($isWebhook);
         ConvertEmptyStringsToNull::skipWhen($isWebhook);
+    }
+
+    /** @return array<string, int|string> */
+    private static function beelErrorContext(\Throwable $exception): array
+    {
+        for ($current = $exception; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof BeelApiError) {
+                return array_filter([
+                    'beel_request_id' => $current->requestId,
+                    'beel_api_code' => $current->apiCode,
+                    'beel_status' => $current->statusCode,
+                ], static fn ($value): bool => $value !== null && $value !== '' && $value !== 0);
+            }
+        }
+
+        return [];
     }
 }

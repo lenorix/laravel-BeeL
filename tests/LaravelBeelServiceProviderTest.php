@@ -1,5 +1,8 @@
 <?php
 
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Support\Facades\Http;
+use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelHttpClientFactory;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\ConfigCredentialsResolver;
@@ -9,6 +12,7 @@ use Lenorix\LaravelBeel\Contracts\WebhookRetryAccounts;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\CredentialsWebhookRetryAccounts;
 use Lenorix\LaravelBeel\Facades\LaravelBeel;
+use Lenorix\LaravelBeel\Testing\BeelFake;
 
 it('binds BeelManager as a singleton', function () {
     expect(app(BeelManager::class))->toBe(app(BeelManager::class));
@@ -42,4 +46,26 @@ it('publishes the beel config file with expected defaults', function () {
         ->and(config('beel.webhook_dedupe_seconds'))->toBe(900)
         ->and(config('beel.webhook_dedupe_store'))->toBeNull()
         ->and(config('beel.http.retries'))->toBe(3);
+});
+
+it('adds the BeeL request id, error code and status to the log context of reported errors', function () {
+    config()->set('services.beel.key', 'beel_sk_test_fake');
+    config()->set('services.beel.company_id', 'company-1');
+    config()->set('beel.http.retries', 0);
+    Http::fake(['*' => BeelFake::error(422, 'EMISSION_NOT_READY')]);
+
+    try {
+        app(BeelManager::class)->company()->invoices->issue('inv-1');
+    } catch (BeelApiError $error) {
+    }
+
+    $handler = app(ExceptionHandler::class);
+
+    expect($handler->buildContextForException($error))->toMatchArray([
+        'beel_request_id' => BeelFake::REQUEST_ID,
+        'beel_api_code' => 'EMISSION_NOT_READY',
+        'beel_status' => 422,
+    ])
+        ->and($handler->buildContextForException(new RuntimeException('Issuing failed', previous: $error)))->toHaveKey('beel_api_code', 'EMISSION_NOT_READY')
+        ->and($handler->buildContextForException(new RuntimeException('unrelated')))->not->toHaveKey('beel_request_id');
 });

@@ -138,6 +138,30 @@ Errors exit with status 1; warnings are reported but exit 0. It checks the defau
 
 Requests pass through Laravel's HTTP client, so Laravel HTTP events and configured Guzzle options are available. Configure `timeout`, `connect_timeout`, `retries`, `retry_delay_ms`, and optional Guzzle `options` in `config/beel.php`. Retries apply to connection errors, HTTP 429, and 5xx responses; a 429's `Retry-After` (capped at 60s) is honored when present, falling back to `retry_delay_ms` otherwise.
 
+### Logs and metrics
+
+When a reported exception is (or wraps) a BeeL API error, the package adds `beel_request_id`, `beel_api_code` and `beel_status` to its log context, so a log line is enough to ask BeeL support about a failed call.
+
+For metrics, listen to Laravel's HTTP client events. They fire once per attempt, retries included; filter on BeeL's host:
+
+```php
+use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\ResponseReceived;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(function (ResponseReceived $event): void {
+    if ($event->request->toPsrRequest()->getUri()->getHost() !== 'app.beel.es') {
+        return;
+    }
+
+    $status = $event->response->status();                                  // count 429s and 5xx
+    $seconds = $event->response->transferStats?->getTransferTime();       // latency of this attempt
+    $requestId = $event->response->header('X-Request-Id');
+});
+
+Event::listen(function (ConnectionFailed $event): void { /* BeeL unreachable */ });
+```
+
 ## Webhooks
 
 The simplest setup needs no code: run `php artisan beel:webhook:subscribe` (or create the subscription in BeeL yourself, pointing at `https://your-app/beel/webhook`, and put its signing secret in `BEEL_WEBHOOK_SECRET`, read as `services.beel.webhook_secret`), then listen to `BeelWebhookReceived`. Everything below that (per-tenant secrets, your own endpoint) is optional.

@@ -80,6 +80,7 @@ Default credentials: when an argument is null, `BeelManager` asks the bound `Len
 
 - `Lenorix\BeelSdk\Exception\BeelApiError` (extends `RuntimeException`): `statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`.
 - Subclasses: `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422, field errors in `details`), `BeelRateLimitError` (429, `retryAfterSeconds`).
+- Observability: when a reported exception is or wraps a `BeelApiError`, the package adds `beel_request_id`, `beel_api_code` and `beel_status` to the log context (via the exception handler's `buildContextUsing()`). For metrics, listen to Laravel's `Illuminate\Http\Client\Events\ResponseReceived` / `ConnectionFailed`, filtered on the BeeL host: they fire once per attempt (retries included); latency is `$event->response->transferStats?->getTransferTime()`. No package-specific event is needed.
 - Transport failures are not `BeelApiError`: `Lenorix\LaravelBeel\LaravelNetworkException` (connection failure, implements PSR-18 `NetworkExceptionInterface`, `getRequest()`) and `Lenorix\LaravelBeel\LaravelClientException` (anything else, PSR-18 `ClientExceptionInterface`).
 
 ## Webhook endpoint
