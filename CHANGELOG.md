@@ -41,7 +41,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
 
   `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
 - Per-type webhook events in `Events\Webhooks` (`InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...), dispatched right after `BeelWebhookReceived` for known types, with typed `data()`.
-- `$company->invoices->storePreview()` (the invoice's WebP preview) and `$company->storeRepresentationDocument()` (the AEAT representation PDF) store those documents the same way as `storePdf()`. The download settings are `beel.downloads.*`, and the exceptions are `DocumentAlreadyExists` and `DocumentDownloadFailed`.
+- `$company->invoices->storePreview()` (the invoice's preview image; WebP per BeeL's docs, though the sandbox serves PNG, so any image is accepted) and `$company->storeRepresentationDocument()` (the AEAT representation PDF) store those documents the same way as `storePdf()`. The download settings are `beel.downloads.*`, and the exceptions are `DocumentAlreadyExists` and `DocumentDownloadFailed`.
 - The PSR-18 bridge hands the SDK Guzzle's response as is (body in `php://temp`) instead of rebuilding it from a copied string.
 - `Jobs\Middleware\ThrottleBeelRequests` keeps queued jobs under BeeL's rate limit per API key (`beel.queue_rate_limit`, 250/min), releasing them until the window resets instead of provoking 429s. `StoreInvoicePdf` uses it and retries within a day, counting only exceptions.
 - Config values are read typed: numbers may come as env strings, but a wrong type (e.g. an array for `beel.http.timeout`) fails with an error naming the key instead of silently becoming 0.

@@ -75,10 +75,12 @@ final class BeelCompanyInvoices
     }
 
     /**
-     * Store an invoice's preview image (WebP, drafts included) on a Laravel disk and return the path,
-     * with the same streaming, verification and atomic write as storePdf().
+     * Store an invoice's preview image (drafts included) on a Laravel disk and return the path, with
+     * the same streaming, verification and atomic write as storePdf(). BeeL documents it as WebP, but
+     * the sandbox serves PNG under a .webp name, so any WebP, PNG or JPEG is accepted; pick the path's
+     * extension accordingly, or keep BeeL's.
      *
-     * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to `image/webp`.
+     * @param  array<string, mixed>  $options  Passed to the disk; no `ContentType` is forced.
      *
      * @throws DocumentAlreadyExists The path exists and `$overwrite` is false.
      * @throws DocumentDownloadFailed Every attempt failed; nothing was written to `$path`.
@@ -87,7 +89,7 @@ final class BeelCompanyInvoices
     {
         return $this->storage()->store(
             fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
-            DocumentKind::Webp, "the preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
+            DocumentKind::Image, "the preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
         );
     }
 
@@ -135,7 +137,7 @@ final class BeelCompanyInvoices
     }
 
     /**
-     * Store the PDF preview of an invoice (drafts included; it has no fiscal validity) on a Laravel
+     * Store the PDF preview of a draft invoice (BeeL only renders it for drafts; it has no fiscal validity) on a Laravel
      * disk, streamed, verified and written atomically.
      *
      * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to BeeL's.

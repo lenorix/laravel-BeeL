@@ -25,7 +25,9 @@ it('fakes an invoice the SDK hydrates', function () {
         ->and($invoice->getInvoiceNumber())->toBe('A/2025/0042')
         ->and($invoice->getIssueDate()->format('Y-m-d'))->toBe('2025-01-20')
         ->and($invoice->getTotals()->getInvoiceTotal())->toEqual(1590)
-        ->and($invoice->getVerifactu()->getSubmissionStatus())->toBe('ACCEPTED');
+        ->and($invoice->getVerifactu()->getSubmissionStatus())->toBe('ACCEPTED')
+        ->and($invoice->getCreatedAt()->format('u'))->toBe('123456') // BeeL sends fractions of a second
+        ->and($invoice->getAttachments())->toBe([]);
 });
 
 it('fakes a page of customers the SDK lists and iterates', function () {

@@ -96,27 +96,37 @@ it('does not repeat an archive after a 5xx, since BeeL would build it again', fu
     expect(Storage::disk('exports')->allFiles())->toBe([]);
 });
 
+/** A spreadsheet export of $size bytes, generated lazily so the fake itself holds nothing. */
+function lazyExport(int $size): PsrResponse
+{
+    $produced = 0;
+
+    return new PsrResponse(200, ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length' => (string) $size], new PumpStream(function (int $length) use ($size, &$produced) {
+        if ($produced >= $size) {
+            return false;
+        }
+        $chunk = $produced === 0 ? "PK\x03\x04".str_repeat('x', min($length, $size) - 4) : str_repeat('x', min($length, $size - $produced));
+        $produced += strlen($chunk);
+
+        return $chunk;
+    }));
+}
+
 it('streams a large export into the disk with small, constant memory', function () {
-    $size = 32 * 1024 * 1024;
-    Http::fake(function () use ($size) {
-        $produced = 0;
-
-        return Create::promiseFor(new PsrResponse(200, ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length' => (string) $size], new PumpStream(function (int $length) use ($size, &$produced) {
-            if ($produced >= $size) {
-                return false;
-            }
-            $chunk = $produced === 0 ? "PK\x03\x04".str_repeat('x', $length - 4) : str_repeat('x', min($length, $size - $produced));
-            $produced += strlen($chunk);
-
-            return $chunk;
-        })));
+    $sizes = [1024 * 1024, 32 * 1024 * 1024];
+    Http::fake(function () use (&$sizes) {
+        return Create::promiseFor(lazyExport(array_shift($sizes)));
     });
+    $invoices = app(BeelManager::class)->company()->invoices;
+
+    // Warm-up: the first call loads the SDK's and Guzzle's classes, which is not the download.
+    $invoices->storeExport(['invoice_ids' => ['i-1']], 'small.xlsx', disk: 'exports');
     gc_collect_cycles();
     $before = memory_get_usage();
     memory_reset_peak_usage();
 
-    app(BeelManager::class)->company()->invoices->storeExport(['invoice_ids' => ['i-1']], 'big.xlsx', disk: 'exports');
+    $invoices->storeExport(['invoice_ids' => ['i-1']], 'big.xlsx', disk: 'exports');
 
-    expect(Storage::disk('exports')->size('big.xlsx'))->toBe($size)
+    expect(Storage::disk('exports')->size('big.xlsx'))->toBe(32 * 1024 * 1024)
         ->and(memory_get_peak_usage() - $before)->toBeLessThan(4 * 1024 * 1024);
 });

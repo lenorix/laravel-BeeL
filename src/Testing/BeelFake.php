@@ -157,8 +157,16 @@ final class BeelFake
                 'qr_url' => 'https://verifactu.agenciatributaria.gob.es/v?id=a7f3c9e2b1d4f8a6',
                 'submission_status' => 'ACCEPTED',
             ],
-            'created_at' => '2025-01-20T10:30:00Z',
-            'updated_at' => '2025-01-20T10:35:00Z',
+            'pdf_download_url' => '/v1/companies/7c9e6679-7425-40de-944b-e07fc1f90ae7/invoices/f47ac10b-58cc-4372-a567-0e02b2c3d479/pdf',
+            'send_automatically' => false,
+            'sent_at' => null,
+            'sending_history' => [],
+            'attachments' => [],
+            'replaced_invoice_ids' => [],
+            'metadata' => (object) [],
+            // BeeL's timestamps carry fractions of a second.
+            'created_at' => '2025-01-20T10:30:00.123456Z',
+            'updated_at' => '2025-01-20T10:35:00.654321Z',
         ], $overrides);
     }
 
@@ -218,6 +226,7 @@ final class BeelFake
             'account_id' => '9b2e4c1a-7d3f-4e8b-a6c5-1f0d2e3b4a5c',
             'name' => 'Tu Empresa SL',
             'email' => 'owner@tuempresa.es',
+            'logo_url' => null,
             'language' => 'es',
             'credential' => [
                 'type' => 'api_key',

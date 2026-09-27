@@ -37,14 +37,27 @@ it('stores an invoice preview image, verified as WebP', function () {
     Http::assertSent(fn (ClientRequest $r) => str_contains($r->url(), 'beel-previews') && ! $r->hasHeader('Authorization'));
 });
 
-it('refuses to store a preview that is not a WebP image', function () {
+it('accepts the PNG BeeL\'s sandbox serves under a .webp name, without stamping a wrong type', function () {
+    $png = "\x89PNG\r\n\x1a\n\0\0\0\rIHDR fake";
+    Http::fake([
+        '*/invoices/inv-1/preview' => BeelFake::ok(['image_url' => 'https://beel-previews.s3.test/inv-1_preview.webp?sig=x', 'expires_in_seconds' => 300]),
+        'beel-previews.s3.test/*' => Http::response($png, 200, ['Content-Type' => 'image/webp']),
+    ]);
+
+    app(BeelManager::class)->company()->invoices->storePreview('inv-1', 'previews/inv-1.png', disk: 'docs');
+
+    expect(Storage::disk('docs')->get('previews/inv-1.png'))->toBe($png)
+        ->and(Storage::disk('docs')->mimeType('previews/inv-1.png'))->toBe('image/png');
+});
+
+it('refuses to store a preview that is not an image', function () {
     Http::fake([
         '*/invoices/inv-1/preview' => BeelFake::ok(['image_url' => 'https://beel-previews.s3.test/inv-1.webp?sig=x', 'expires_in_seconds' => 300]),
         'beel-previews.s3.test/*' => fn () => Http::response('%PDF-1.7 not an image', 200),
     ]);
 
     expect(fn () => app(BeelManager::class)->company()->invoices->storePreview('inv-1', 'p.webp', disk: 'docs'))
-        ->toThrow(DocumentDownloadFailed::class, 'not a WebP image');
+        ->toThrow(DocumentDownloadFailed::class, 'not an image');
 
     expect(Storage::disk('docs')->allFiles())->toBe([]);
 });

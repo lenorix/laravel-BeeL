@@ -49,7 +49,11 @@ final class SignedDownloadStorage
         }
 
         $attempts = max(1, Settings::int('beel.downloads.attempts', 3));
-        $options += ['ContentType' => $kind->contentType()];
+        // An image's real format can differ from what BeeL declares: let the disk infer it rather than
+        // stamp a possibly wrong type.
+        if ($kind !== DocumentKind::Image) {
+            $options += ['ContentType' => $kind->contentType()];
+        }
 
         for ($attempt = 1; ; $attempt++) {
             // A fresh URL every attempt: they expire after five minutes.
