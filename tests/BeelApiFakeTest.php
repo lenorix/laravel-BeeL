@@ -121,3 +121,14 @@ it('fakes voiding, correcting, sending and product operations', function () {
     Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/invoices/inv-1/corrective'));
     expect(Http::get('https://app.beel.es/api/v1/companies/company-1/products')->json('data.products.0.id'))->toBe('p-1');
 });
+
+it('fakes archives, exports and draft previews so the store methods work end to end', function () {
+    Storage::fake('files');
+    BeelFake::api()->invoicePdfArchive(counts: ['total' => 2, 'successful' => 1, 'failed' => 1])->invoiceExport(total: 5)->invoicePreviewPdf()->fake();
+    $invoices = app(BeelManager::class)->company()->invoices;
+
+    expect($invoices->storePdfArchive(['invoice_ids' => ['a', 'b']], 'a.zip', disk: 'files')->counts)->toMatchArray(['failed' => 1])
+        ->and($invoices->storeExport(['invoice_ids' => ['a']], 'e.xlsx', disk: 'files')->counts)->toMatchArray(['total' => 5])
+        ->and($invoices->storePreviewPdf('inv-1', 'p.pdf', disk: 'files')->path)->toBe('p.pdf')
+        ->and(Storage::disk('files')->allFiles())->toEqualCanonicalizing(['a.zip', 'e.xlsx', 'p.pdf']);
+});

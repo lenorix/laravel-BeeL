@@ -162,3 +162,12 @@ it('stops the chain, cleaning up, when the PDF can not be stored', function () {
 
     expect(Storage::disk('invoices')->allFiles())->toBe([]);
 });
+
+it('goes back to the queue when rate limited, without waiting in the worker', function () {
+    config()->set('beel.http.retries', 3);
+    fakeJobPdfApi(BeelFake::error(429, 'RATE_LIMIT_EXCEEDED', retryAfter: 40));
+
+    runJob(new StoreInvoicePdf('inv-1', 'a.pdf', disk: 'invoices'))->assertReleased(delay: 40)->assertNotFailed();
+
+    Http::assertSentCount(1);
+});

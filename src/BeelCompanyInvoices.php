@@ -7,6 +7,8 @@ namespace Lenorix\LaravelBeel;
 use Illuminate\Container\Container;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Exception\BeelNotReadyError;
+use Lenorix\BeelSdk\Generated\Model\CreateInvoiceExportRequest;
+use Lenorix\BeelSdk\Generated\Model\CreateInvoicePdfArchiveRequest;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
@@ -86,6 +88,66 @@ final class BeelCompanyInvoices
         return $this->storage()->store(
             fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
             DocumentKind::Webp, "the preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
+        );
+    }
+
+    /**
+     * Store a ZIP with the PDFs of up to 500 invoices on a Laravel disk. Invoices without an
+     * available PDF are left out: check `counts` (`total`, `successful`, `failed`) on the result.
+     *
+     * The ZIP comes in BeeL's response and is streamed into the disk, verified and written
+     * atomically like storePdf(). It is never re-requested after a failure, since each request makes
+     * BeeL build the archive again.
+     *
+     * @param  CreateInvoicePdfArchiveRequest|array<string, mixed>  $request  e.g. `['invoice_ids' => [...]]`.
+     * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to BeeL's.
+     *
+     * @throws DocumentAlreadyExists The path exists and `$overwrite` is false; nothing was requested.
+     * @throws DocumentDownloadFailed Storing failed; nothing was written to `$path`.
+     * @throws BeelApiError From BeeL, e.g. when no PDF is available.
+     */
+    public function storePdfArchive(CreateInvoicePdfArchiveRequest|array $request, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): StoredDocument
+    {
+        return $this->storage()->storeDownload(
+            fn () => $this->resource->createPdfArchive($request),
+            DocumentKind::Zip, 'the invoice PDF archive', $path, $disk, $overwrite, $options,
+        );
+    }
+
+    /**
+     * Store a spreadsheet (`.xlsx`) export of up to 50,000 invoices on a Laravel disk, streamed,
+     * verified and written atomically, and never re-requested after a failure. `counts['total']` is
+     * the number of invoices exported.
+     *
+     * @param  CreateInvoiceExportRequest|array<string, mixed>  $request  `invoice_ids` or `filters`, and `format`.
+     * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to BeeL's.
+     *
+     * @throws DocumentAlreadyExists The path exists and `$overwrite` is false; nothing was requested.
+     * @throws DocumentDownloadFailed Storing failed; nothing was written to `$path`.
+     * @throws BeelApiError From BeeL, e.g. `EXPORT_SELECTION_REQUIRED` or `EXPORT_LIMIT_EXCEEDED`.
+     */
+    public function storeExport(CreateInvoiceExportRequest|array $request, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): StoredDocument
+    {
+        return $this->storage()->storeDownload(
+            fn () => $this->resource->export($request),
+            DocumentKind::Zip, 'the invoice export', $path, $disk, $overwrite, $options,
+        );
+    }
+
+    /**
+     * Store the PDF preview of an invoice (drafts included; it has no fiscal validity) on a Laravel
+     * disk, streamed, verified and written atomically.
+     *
+     * @param  array<string, mixed>  $options  Passed to the disk; `ContentType` defaults to BeeL's.
+     *
+     * @throws DocumentAlreadyExists The path exists and `$overwrite` is false; nothing was requested.
+     * @throws DocumentDownloadFailed Storing failed; nothing was written to `$path`.
+     */
+    public function storePreviewPdf(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): StoredDocument
+    {
+        return $this->storage()->storeDownload(
+            fn () => $this->resource->previewPdf($invoiceId),
+            DocumentKind::Pdf, "the PDF preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
         );
     }
 

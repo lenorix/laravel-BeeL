@@ -48,6 +48,8 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6+.
 - `LaravelNetworkException` and `LaravelClientException` autoload like any other class.
 - Document downloads count bytes by position, so storage adapters that read a body twice (the AWS SDK computes a checksum first) no longer reject a valid download as too long.
 - The typed webhook events' `data()` checks the model it returns and throws `UnexpectedValueException` naming the event if the payload doesn't match.
+- `$company->invoices->storePdfArchive()`, `storeExport()` and `storePreviewPdf()` store the files BeeL returns in the response body (invoice PDF archive, spreadsheet export, draft PDF preview), streamed from the socket and verified like `storePdf()`, returning a `StoredDocument` with BeeL's counts. `BeelFake::api()` fakes them.
+- `StoreInvoicePdf` goes back to the queue for BeeL's `Retry-After` when rate limited, instead of waiting in the worker.
 - `beel:check --api-key= --company-id= --account-id=` diagnoses one tenant instead of the default credentials.
 - Integrator support:
   - `BeelWebhookSubscriptions::allEvents()` and `beel:webhook:subscribe --provisioner-events` include the provisioner-only events.

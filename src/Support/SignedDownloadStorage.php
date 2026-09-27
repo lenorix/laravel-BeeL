@@ -14,8 +14,11 @@ use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\UnableToMoveFile;
+use Lenorix\BeelSdk\Http\BinaryDownload;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
+use Lenorix\LaravelBeel\StoredDocument;
+use Psr\Http\Message\StreamInterface;
 
 /**
  * Streams a document from one of BeeL's pre-signed URLs into a Laravel disk, verified and atomic.
@@ -66,6 +69,34 @@ final class SignedDownloadStorage
         }
     }
 
+    /**
+     * Stores a file BeeL's API returns in the response body (an invoice archive, an export, a draft's
+     * PDF preview), streamed and verified like store(). A single attempt: the SDK already retried the
+     * request where that is safe, and re-requesting an archive or export makes BeeL build it again.
+     *
+     * @param  \Closure(): BinaryDownload  $download  Makes the request; called only when $path may be written.
+     * @param  array<string, mixed>  $options
+     */
+    public function storeDownload(\Closure $download, DocumentKind $kind, string $document, string $path, ?string $disk, bool $overwrite, array $options): StoredDocument
+    {
+        $filesystem = $this->driver($disk);
+
+        // Before calling BeeL, so an existing file costs no API call and no download.
+        if (! $overwrite && $filesystem->fileExists($path)) {
+            throw new DocumentAlreadyExists($document, $path);
+        }
+
+        $file = $download();
+
+        try {
+            $this->writeVerified($filesystem, $file->body, $file->contentLength, $kind, $path, $overwrite, $options + ['ContentType' => $file->contentType ?? $kind->contentType()], $document, fn (string $message) => $message);
+        } catch (DownloadFailure $failure) {
+            throw new DocumentDownloadFailed($document, $failure->getMessage(), 1);
+        }
+
+        return new StoredDocument($path, $file->fileName, $file->counts);
+    }
+
     /** @param array<string, mixed> $options */
     private function downloadInto(FilesystemOperator $filesystem, string $url, DocumentKind $kind, string $path, bool $overwrite, array $options, string $document): void
     {
@@ -93,10 +124,27 @@ final class SignedDownloadStorage
         // Guzzle drops Content-Length when it decodes a Content-Encoding, so a remaining one always
         // describes the bytes read here.
         $length = $response->header('Content-Length');
-        $body = new VerifiedDownloadStream($response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null, $kind);
+
+        $this->writeVerified($filesystem, $response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null, $kind, $path, $overwrite, $options, $document, fn (string $message) => self::redact($message, $url));
+    }
+
+    /**
+     * Streams $stream into a temporary file next to $path, checks it (signature, declared length,
+     * stored size) and only then moves it into place. Any failure removes the temporary file and
+     * leaves an existing $path untouched.
+     *
+     * @param  array<string, mixed>  $options
+     * @param  \Closure(string): string  $redact  Keeps secrets (a pre-signed URL) out of messages.
+     *
+     * @throws DocumentAlreadyExists
+     * @throws DownloadFailure
+     */
+    private function writeVerified(FilesystemOperator $filesystem, StreamInterface $stream, ?int $length, DocumentKind $kind, string $path, bool $overwrite, array $options, string $document, \Closure $redact): void
+    {
+        $body = new VerifiedDownloadStream($stream, $length, $kind);
 
         // Same directory, so the final move is a rename on local disks; ends like the target so disks
-        // that guess the MIME type from the extension (S3, GCS) keep treating it as a PDF.
+        // that guess the MIME type from the extension (S3, GCS) keep treating it as the right type.
         $directory = dirname($path);
         $temporary = ($directory === '.' ? '' : $directory.'/').'.beel-'.Str::random(16).'-'.basename($path);
 
@@ -129,7 +177,7 @@ final class SignedDownloadStorage
                 throw $exception;
             }
 
-            throw new DownloadFailure(self::redact(($body->failure() ?? $exception)->getMessage(), $url), retryable: true);
+            throw new DownloadFailure($redact(($body->failure() ?? $exception)->getMessage()), retryable: true);
         } finally {
             if (is_resource($resource)) {
                 fclose($resource);

@@ -10,6 +10,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Lenorix\BeelSdk\Exception\BeelApiError;
+use Lenorix\BeelSdk\Exception\BeelRateLimitError;
+use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
@@ -20,7 +22,8 @@ use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
  *
  *     StoreInvoicePdf::dispatch($invoiceId, 'invoices/A-42.pdf', disk: 's3');
  *
- * - While BeeL is still generating the PDF, it goes back to the queue for the `Retry-After` BeeL gives.
+ * - While BeeL is still generating the PDF, or when rate limited, it goes back to the queue for the
+ *   `Retry-After` BeeL gives, instead of blocking the worker.
  * - An existing file without `overwrite` counts as done, so dispatching twice is harmless.
  * - A failed download is retried with backoff (up to 5 exceptions, within a day); an error that
  *   retrying can't fix (a draft has no PDF, an unknown invoice) fails the job at once.
@@ -76,10 +79,14 @@ final class StoreInvoicePdf implements ShouldBeEncrypted, ShouldQueue
     public function handle(BeelManager $manager): void
     {
         try {
+            // No in-process retries: waiting out a 429 would block the worker; the queue waits instead.
             $manager->company(apiKey: $this->apiKey, companyId: $this->companyId)
-                ->invoices->storePdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
+                ->invoices->withOptions(new RequestOptions(maxRetries: 0))
+                ->storePdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
         } catch (InvoicePdfNotReady $exception) {
             $this->release($exception->retryAfter ?? 5);
+        } catch (BeelRateLimitError $exception) {
+            $this->release($exception->retryAfterSeconds);
         } catch (DocumentAlreadyExists) {
             // Already stored (e.g. by an earlier dispatch): nothing left to do.
         } catch (BeelApiError $exception) {

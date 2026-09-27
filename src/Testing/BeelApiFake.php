@@ -89,6 +89,38 @@ final class BeelApiFake
             ->onUrl($url, BeelFake::pdf($contents));
     }
 
+    /**
+     * The ZIP of invoice PDFs `storePdfArchive()` / `createPdfArchive()` receive.
+     *
+     * @param  array{total?: int, successful?: int, failed?: int}  $counts
+     */
+    public function invoicePdfArchive(string|PromiseInterface $contents = "PK\x03\x04fake archive", array $counts = ['total' => 1, 'successful' => 1, 'failed' => 0]): self
+    {
+        return $this->on('POST', '/v1/companies/{company}/invoices/pdf-archive', $contents instanceof PromiseInterface ? $contents : Http::response($contents, 200, [
+            'Content-Type' => 'application/zip',
+            'Content-Disposition' => 'attachment; filename="invoices.zip"',
+            'X-Bulk-Total' => (string) ($counts['total'] ?? 1),
+            'X-Bulk-Successful' => (string) ($counts['successful'] ?? 1),
+            'X-Bulk-Failed' => (string) ($counts['failed'] ?? 0),
+        ]));
+    }
+
+    /** The spreadsheet `storeExport()` / `export()` receive. */
+    public function invoiceExport(string|PromiseInterface $contents = "PK\x03\x04fake xlsx", int $total = 1): self
+    {
+        return $this->on('POST', '/v1/companies/{company}/invoices/exports', $contents instanceof PromiseInterface ? $contents : Http::response($contents, 200, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition' => 'attachment; filename="invoices.xlsx"',
+            'X-Total-Invoices' => (string) $total,
+        ]));
+    }
+
+    /** The draft PDF preview `storePreviewPdf()` / `previewPdf()` receive. */
+    public function invoicePreviewPdf(string|PromiseInterface $contents = "%PDF-1.7\n%fake preview\n", ?string $id = null): self
+    {
+        return $this->on('GET', '/v1/companies/{company}/invoices/'.self::id($id).'/pdf/preview', $contents instanceof PromiseInterface ? $contents : Http::response($contents, 200, ['Content-Type' => 'application/pdf']));
+    }
+
     /** @param  array<array-key, array<string, mixed>>|PromiseInterface  $customers */
     public function listCustomers(array|PromiseInterface $customers = []): self
     {
