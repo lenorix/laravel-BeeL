@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Support\EnvFileWriter;
@@ -20,9 +21,9 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    // Some tests make the directory read-only or add subdirectories and symlinks: restore and remove it all.
     @chmod($this->envDir, 0755);
-    array_map('unlink', array_filter(glob($this->envDir.'/{,.}*', GLOB_BRACE) ?: [], 'is_file'));
-    @rmdir($this->envDir);
+    File::deleteDirectory($this->envDir);
 });
 
 /** @param array<int, array<string, mixed>> $existing */
