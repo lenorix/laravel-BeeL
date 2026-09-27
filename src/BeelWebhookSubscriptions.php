@@ -25,9 +25,6 @@ use Lenorix\LaravelBeel\Support\Settings;
  */
 final class BeelWebhookSubscriptions
 {
-    /** Only sent to the account that provisioned a managed account. */
-    public const PROVISIONER_EVENTS = ['account.claimed', 'company.created', 'representation.signed'];
-
     public const ACCOUNT_RELATIONSHIPS = ['own', 'managed', 'all'];
 
     public function __construct(private BeelManager $manager) {}
@@ -43,7 +40,7 @@ final class BeelWebhookSubscriptions
     /** @return list<string> Every event type except the provisioner-only ones. */
     public function defaultEvents(): array
     {
-        return array_values(array_diff($this->allEvents(), self::PROVISIONER_EVENTS));
+        return array_values(array_diff($this->allEvents(), self::provisionerEvents()));
     }
 
     /**
@@ -56,6 +53,25 @@ final class BeelWebhookSubscriptions
     public function allEvents(): array
     {
         return array_map(fn (WebhookEventType $type) => $type->value, WebhookEventType::cases());
+    }
+
+    /**
+     * The events BeeL only sends to the account that provisioned a managed account (integrators).
+     *
+     * BeeL's webhook docs (https://docs.beel.es/webhooks/events) list three; lenorix/beel-sdk 0.6's
+     * WebhookEventType::isProvisionerOnly() only flags account.*, so the documented list is kept here
+     * and anything the SDK flags is added to it.
+     *
+     * @return list<string>
+     */
+    public static function provisionerEvents(): array
+    {
+        $flagged = array_map(
+            fn (WebhookEventType $type) => $type->value,
+            array_filter(WebhookEventType::cases(), fn (WebhookEventType $type) => $type->isProvisionerOnly()),
+        );
+
+        return array_values(array_unique(['account.claimed', 'company.created', 'representation.signed', ...$flagged]));
     }
 
     /**

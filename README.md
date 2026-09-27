@@ -172,7 +172,7 @@ To test your webhook listeners, use the `InteractsWithBeelWebhooks` trait. It po
 $this->postBeelWebhook('invoice.issued')->assertStatus(202);
 ```
 
-The package retries faked 429 and 5xx responses; use `Sleep::fake()` to skip the waits.
+Set `beel.http.retries` to `0` in tests: otherwise a faked 429 or 5xx is retried, with real waits.
 
 ## More features
 
@@ -198,7 +198,7 @@ The package ships [Laravel Boost](https://laravel.com/docs/boost) guidelines and
 
 - PHP 8.4+
 - Laravel 13
-- `lenorix/beel-sdk` 0.4.1+
+- `lenorix/beel-sdk` 0.6+
 
 ## License
 

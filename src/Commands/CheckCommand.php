@@ -190,7 +190,7 @@ final class CheckCommand extends Command
                 if ($subscription->isInitialized('accountRelationship') && $subscription->getAccountRelationship() === 'own') {
                     $this->warn_("Webhook subscription {$subscription->getId()} only receives events from your own account (account_relationship own), not from the accounts you manage; subscribe with --account-relationship=all if the app needs them.");
                 }
-                $missingEvents = array_values(array_diff(BeelWebhookSubscriptions::PROVISIONER_EVENTS, $subscription->getEvents()));
+                $missingEvents = array_values(array_diff(BeelWebhookSubscriptions::provisionerEvents(), $subscription->getEvents()));
                 if ($missingEvents !== []) {
                     $this->warn_("Webhook subscription {$subscription->getId()} does not receive the integrator events ".implode(', ', $missingEvents).'; subscribe with --provisioner-events if the app needs them.');
                 }

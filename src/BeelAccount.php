@@ -10,6 +10,7 @@ use Lenorix\BeelSdk\Resource\Account\AccountCompaniesResource;
 use Lenorix\BeelSdk\Resource\Account\AccountEmailsResource;
 use Lenorix\BeelSdk\Resource\Account\AccountInvitationsResource;
 use Lenorix\BeelSdk\Resource\Account\AccountMembersResource;
+use Lenorix\BeelSdk\Resource\Account\AccountRequestLogsResource;
 use Lenorix\BeelSdk\Resource\Account\AccountWebhooksResource;
 use Lenorix\BeelSdk\Resource\AccountScope;
 
@@ -21,13 +22,14 @@ use Lenorix\BeelSdk\Resource\AccountScope;
  * @property-read AccountInvitationsResource $invitations
  * @property-read AccountWebhooksResource $webhooks
  * @property-read AccountEmailsResource $emails
+ * @property-read AccountRequestLogsResource $requestLogs
  *
  * @method \Lenorix\BeelSdk\Generated\Model\ManagedAccountSummary get()
  * @method \Lenorix\BeelSdk\Generated\Model\ProvisioningUsage usage()
- * @method mixed changeAccessLevel(\Lenorix\BeelSdk\Generated\Model\ChangeAccessLevelRequest $request)
- * @method \Lenorix\BeelSdk\Generated\Model\ClaimTokenResult createClaimToken(?\Lenorix\BeelSdk\Generated\Model\CreateClaimTokenRequest $request = null)
- * @method mixed setOwner(\Lenorix\BeelSdk\Generated\Model\SetAccountOwnerRequest $request)
- * @method mixed endManagement()
+ * @method void changeAccessLevel(\Lenorix\BeelSdk\Generated\Model\ChangeAccessLevelRequest|array<string, mixed> $request)
+ * @method \Lenorix\BeelSdk\Generated\Model\ClaimTokenResult createClaimToken(\Lenorix\BeelSdk\Generated\Model\CreateClaimTokenRequest|array<string, mixed>|null $request = null)
+ * @method void setOwner(\Lenorix\BeelSdk\Generated\Model\SetAccountOwnerRequest|array<string, mixed> $request)
+ * @method void endManagement()
  * @method self withOptions(\Lenorix\BeelSdk\Http\RequestOptions $options) Per-call options; keeps this decorator.
  */
 final class BeelAccount

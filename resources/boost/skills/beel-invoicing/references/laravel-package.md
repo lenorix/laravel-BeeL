@@ -27,7 +27,7 @@ Verified against the package source on 2026-09-26.
 | `webhook_dedupe_store` | `null` | Cache store for that (default store if null) |
 | `queue_rate_limit` | `250` | Requests per minute per API key for jobs using `ThrottleBeelRequests`; 0 disables |
 | `http.timeout` / `http.connect_timeout` | `30` / `10` | Seconds |
-| `http.retries` / `http.retry_delay_ms` | `3` / `100` | Laravel retries on connection errors, 429 and 5xx |
+| `http.retries` / `http.retry_delay_ms` / `http.max_retry_delay_ms` | `3` / `500` / `60000` | Passed to the SDK, which retries safely (see Transport) |
 | `http.options` | `[]` | Extra Guzzle options |
 | `webhook_delivery_retry.max_age_minutes` | `1440` | Only retry events first attempted within this window |
 | `webhook_delivery_retry.max_attempts` | `8` | Give up after this many attempts (automatic ones included) |
@@ -134,8 +134,8 @@ class IssueInvoice implements ShouldQueue
 
 ## Transport, retries and idempotency
 
-- The SDK's own retry layer is disabled (`maxRetries: 0`); Laravel's `PendingRequest::retry` retries connection errors, 429 and 5xx. On a 429 it waits the numeric-seconds `Retry-After` value (capped at 60s, BeeL's rate-limit window), falling back to `retry_delay_ms` when the header is absent or not that form. If retries are exhausted or disabled, handle `BeelRateLimitError::$retryAfterSeconds` yourself for longer waits.
-- The SDK adds one `Idempotency-Key` per logical POST before the transport, so Laravel's retries resend the same key. Pass your own key when the operation may be retried across processes or queue attempts: `$company->invoices->withOptions(new RequestOptions(idempotencyKey: 'invoice-issue-'.$id))->issue($id)` (works on every operation and is inherited by sub-resources), or the `$headers` argument where a method has one.
+- Retries are the SDK's (`lenorix/beel-sdk` 0.6+); the Laravel transport never retries. `beel.http.retries` (3), `retry_delay_ms` (500, exponential backoff) and `max_retry_delay_ms` (60,000) are passed to it. It retries 429, 5xx and connection errors, but a 5xx or connection error only for requests safe to repeat: `GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE`, or a POST/PATCH with an `Idempotency-Key`; never `createPdfArchive()`/`export()` (`retryServerErrors: false`). It waits exactly what BeeL asks (`Retry-After`); a wait longer than `max_retry_delay_ms` is not waited: `BeelRateLimitError` is thrown with `retryAfterSeconds`. Waits block the PHP process: in queued jobs use `withOptions(new RequestOptions(maxRetries: 0))` and `release($e->retryAfterSeconds)`, or `ThrottleBeelRequests`. Per call: `RequestOptions(maxRetries:, retryServerErrors:)`.
+- The SDK adds one `Idempotency-Key` per logical POST before the transport, so the SDK's retries resend the same key. Pass your own key when the operation may be retried across processes or queue attempts: `$company->invoices->withOptions(new RequestOptions(idempotencyKey: 'invoice-issue-'.$id))->issue($id)` (works on every operation and is inherited by sub-resources), or the `$headers` argument where a method has one.
 - All requests go through Laravel's HTTP client, so HTTP client events, `Http::fake()` and global middleware apply.
 
 ## Errors
@@ -237,7 +237,7 @@ class SyncVerifactuStatus implements ShouldQueue
 - Or `Http::fake([...])` with responses from `Lenorix\LaravelBeel\Testing\BeelFake` (shaped like BeeL's OpenAPI examples):
   - `BeelFake::ok(array $data, int $status = 200)`: `{success, data, meta.request_id}`.
   - `BeelFake::page(string $key, array $items, bool $hasNext = false, int $page = 1, int $perPage = 20)`: `data.{$key}` plus `pagination` (keys: `invoices`, `customers`, `products`, `webhooks`, `deliveries`, ...). `cursorPage($key, $items, ?$nextCursor)` for `accounts`.
-  - `BeelFake::error(int $status, string $code, ?string $message = null, array $details = [], ?int $retryAfter = null)`: surfaces as the matching `BeelApiError` subclass with `apiCode`, `details`, `requestId` = `BeelFake::REQUEST_ID`, `retryAfter`. 429 and 5xx are retried `beel.http.retries` times: `Sleep::fake()` or set retries to 0.
+  - `BeelFake::error(int $status, string $code, ?string $message = null, array $details = [], ?int $retryAfter = null)`: surfaces as the matching `BeelApiError` subclass with `apiCode`, `details`, `requestId` = `BeelFake::REQUEST_ID`, `retryAfter`. Set `beel.http.retries` to 0 in tests: the SDK's waits are real (`usleep`), `Sleep::fake()` doesn't skip them.
   - Resource arrays, `$overrides` merged into nested objects with lists replaced whole: `invoice()` (issued, VERI*FACTU accepted), `invoicePdf()` (pre-signed link; `BeelFake::pdf($contents)` fakes its download), `customer()`, `identity(array $overrides = [], ?array $scopes = null)`, `issuingReadiness(array $blockers = [])`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, `webhookData(string $type)` (realistic `data` per event type, `[]` for unknown types).
   - Use `Http::fakeSequence()` with `page(..., hasNext: true)` then a last page to test `all()` iteration.
 - Assert outgoing calls with `Http::assertSent(fn (Illuminate\Http\Client\Request $r) => $r->hasHeader('Authorization', 'Bearer ...') && str_contains($r->url(), $companyId))`.

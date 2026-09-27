@@ -13,7 +13,7 @@ it('wraps a Guzzle connection failure into a LaravelNetworkException', function 
         new Psr7Request('GET', 'https://example.test/ping'),
     ));
 
-    $client = app(BeelHttpClientFactory::class)->make(retries: 0, retryDelayMs: 0);
+    $client = app(BeelHttpClientFactory::class)->make();
     $request = new Psr7Request('GET', 'https://example.test/ping');
 
     try {
@@ -27,7 +27,7 @@ it('wraps a Guzzle connection failure into a LaravelNetworkException', function 
 it('wraps any other transport failure into a LaravelClientException', function () {
     Http::fake(fn () => throw new RuntimeException('boom'));
 
-    $client = app(BeelHttpClientFactory::class)->make(retries: 0, retryDelayMs: 0);
+    $client = app(BeelHttpClientFactory::class)->make();
 
     try {
         $client->sendRequest(new Psr7Request('GET', 'https://example.test/ping'));

@@ -63,8 +63,7 @@ final class BeelWebhookReceived
      */
     public function typed(): WebhookEvent
     {
-        // toEvent() only hydrates; the placeholder secret is never used to verify anything.
-        return $this->typed ??= (new WebhookVerifier('unused'))->toEvent($this->payload);
+        return $this->typed ??= WebhookVerifier::eventFromPayload($this->payload);
     }
 
     /** True only for test deliveries triggered from the BeeL dashboard, never for live events. */

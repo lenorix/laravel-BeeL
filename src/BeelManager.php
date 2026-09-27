@@ -25,8 +25,6 @@ final class BeelManager
     {
         $apiKey ??= $this->credentials()->apiKey();
         $baseUrl = $this->config->get('services.beel.base_url', 'https://app.beel.es/api');
-        $retries = Settings::int('beel.http.retries', 3);
-        $retryDelay = Settings::int('beel.http.retry_delay_ms', 100);
 
         if (! is_string($apiKey) || trim($apiKey) === '') {
             throw new \InvalidArgumentException('No BeeL API key: pass one, set services.beel.key, or bind a CredentialsResolver that returns it.');
@@ -38,10 +36,15 @@ final class BeelManager
         $client = new Beel(
             apiKey: $apiKey,
             baseUrl: $baseUrl,
-            // Laravel owns retries for this transport. The SDK still adds Idempotency-Key.
-            maxRetries: 0,
+            // The SDK owns retries: it knows which requests are safe to repeat (idempotent methods,
+            // POSTs with an Idempotency-Key it adds, never downloads after a 5xx) and waits what BeeL
+            // asks for. A wait longer than max_retry_delay_ms isn't waited: it throws, with
+            // retryAfterSeconds, so a job can release() instead of blocking a worker.
+            maxRetries: max(0, Settings::int('beel.http.retries', 3)),
+            retryDelayMs: max(0, Settings::int('beel.http.retry_delay_ms', 500)),
+            maxRetryDelayMs: max(0, Settings::int('beel.http.max_retry_delay_ms', 60_000)),
             autoIdempotencyKey: true,
-            httpClient: $this->httpClientFactory->make($retries, $retryDelay),
+            httpClient: $this->httpClientFactory->make(),
         );
 
         return $client;

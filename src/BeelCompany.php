@@ -8,13 +8,15 @@ use Illuminate\Container\Container;
 use Lenorix\BeelSdk\Beel;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Generated\Client;
-use Lenorix\BeelSdk\Generated\Model\ErrorResponse;
-use Lenorix\BeelSdk\Generated\Model\RepresentationDownloadResponse;
+use Lenorix\BeelSdk\Resource\Company\CompanyActivationsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyCustomersResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyInvoiceCustomizationResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyLogoResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyPaymentConnectionsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyProductsResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyRecurringInvoicesResource;
+use Lenorix\BeelSdk\Resource\Company\CompanyRepresentationResource;
 use Lenorix\BeelSdk\Resource\Company\CompanySeriesResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyTaxConfigurationResource;
 use Lenorix\BeelSdk\Resource\Company\CompanyVeriFactuConfigurationResource;
@@ -35,10 +37,14 @@ use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
  * @property-read CompanyPaymentConnectionsResource $paymentConnections
  * @property-read CompanyTaxConfigurationResource $taxConfiguration
  * @property-read CompanyVeriFactuConfigurationResource $verifactuConfiguration
+ * @property-read CompanyRepresentationResource $representation
+ * @property-read CompanyActivationsResource $activations
+ * @property-read CompanyInvoiceCustomizationResource $invoiceCustomization
+ * @property-read CompanyLogoResource $logo
  *
  * @method \Lenorix\BeelSdk\Generated\Model\CompanyData get()
- * @method \Lenorix\BeelSdk\Generated\Model\CompanyData update(\Lenorix\BeelSdk\Generated\Model\UpdateCompanyRequest $request)
- * @method mixed delete()
+ * @method \Lenorix\BeelSdk\Generated\Model\CompanyData update(\Lenorix\BeelSdk\Generated\Model\UpdateCompanyRequest|array<string, mixed> $request)
+ * @method void delete()
  * @method \Lenorix\BeelSdk\Generated\Model\FiscalSummaryResponse fiscalSummary(array<string, mixed> $query = [])
  * @method \Lenorix\BeelSdk\Generated\Model\IssuingReadinessData issuingReadiness()
  * @method self withOptions(\Lenorix\BeelSdk\Http\RequestOptions $options) Per-call options; keeps this decorator.
@@ -73,25 +79,7 @@ final class BeelCompany
     public function storeRepresentationDocument(string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string
     {
         return Container::getInstance()->make(SignedDownloadStorage::class)->store(
-            function (): string {
-                // Only the generated client has this endpoint: map its errors like the SDK's resources do.
-                // Statuses the spec lists only as "default" (404, 409, ...) come back as an ErrorResponse
-                // with no status code, so their statusCode is 0.
-                try {
-                    $response = $this->raw->downloadCompanyRepresentationDocument($this->companyId);
-                } catch (\Throwable $exception) {
-                    throw $exception instanceof BeelApiError ? $exception : BeelApiError::fromGenerated($exception);
-                }
-
-                if ($response instanceof ErrorResponse) {
-                    throw BeelApiError::fromErrorResponse($response);
-                }
-                if (! $response instanceof RepresentationDownloadResponse) {
-                    throw new \UnexpectedValueException('BeeL returned no representation document link.');
-                }
-
-                return $response->getData()->getDownloadUrl();
-            },
+            fn (): string => $this->scope->representation->documentLink()->getDownloadUrl(),
             DocumentKind::Pdf, "the representation document of company {$this->companyId}", $path, $disk, $overwrite, $options,
         );
     }

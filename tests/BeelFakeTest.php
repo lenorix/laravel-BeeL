@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Sleep;
 use Lenorix\BeelSdk\Exception\BeelConflictError;
 use Lenorix\BeelSdk\Exception\BeelRateLimitError;
 use Lenorix\BeelSdk\Exception\BeelValidationError;
@@ -97,16 +96,14 @@ it('fakes errors the SDK turns into the matching exception', function () {
     expect(fn () => $company->invoices->get('inv-1'))->toThrow(BeelValidationError::class, 'Request validation failed');
 });
 
-it('fakes a rate limit with Retry-After, which the package retries', function () {
-    Sleep::fake();
-    config()->set('beel.http.retries', 1);
+it('fakes a rate limit with Retry-After, surfaced at once with retries disabled', function () {
+    config()->set('beel.http.retries', 0);
     Http::fake(['*' => BeelFake::error(429, 'RATE_LIMIT_EXCEEDED', retryAfter: 7)]);
 
     expect(fn () => app(BeelManager::class)->company()->invoices->list())->toThrow(function (BeelRateLimitError $e) {
-        expect($e->apiCode)->toBe('RATE_LIMIT_EXCEEDED')->and($e->retryAfter)->toBe(7);
+        expect($e->apiCode)->toBe('RATE_LIMIT_EXCEEDED')->and($e->retryAfterSeconds)->toBe(7);
     });
-    Http::assertSentCount(2);
-    Sleep::assertSleptTimes(1);
+    Http::assertSentCount(1);
 });
 
 it('gives realistic webhook data per event type and nothing for unknown types', function () {

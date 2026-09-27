@@ -78,9 +78,8 @@ final class BeelFake
      * subclass with `apiCode`, `details` and `requestId` set. `$retryAfter` sets the Retry-After
      * header (seconds), as BeeL does on 429.
      *
-     * The package retries 429 and 5xx (`beel.http.retries`), so a test faking one of those gets
-     * as many attempts as retries configured: use `Sleep::fake()` to skip the waits, or set
-     * `beel.http.retries` to 0 to see the error on the first call.
+     * The SDK retries a 429 and a safe-to-repeat 5xx (`beel.http.retries`), waiting for real: set
+     * `beel.http.retries` to 0 in tests to see the error on the first call.
      *
      * @param  array<string, mixed>  $details
      */

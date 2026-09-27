@@ -186,7 +186,7 @@ final class WebhookSubscribeCommand extends Command
         $events = $given !== [] ? $given : $subscriptions->defaultEvents();
 
         return $this->option('provisioner-events')
-            ? array_values(array_unique([...$events, ...BeelWebhookSubscriptions::PROVISIONER_EVENTS]))
+            ? array_values(array_unique([...$events, ...BeelWebhookSubscriptions::provisionerEvents()]))
             : $events;
     }
 

@@ -61,7 +61,7 @@ A public API change is not done until each of these is updated:
 - `BeelCompany`, `BeelAccount` and `BeelCompanyInvoices` decorate SDK scopes and resources. They must keep wrapping whatever `withOptions()` returns.
 - Internal helpers go in `src/Support` and are marked `@internal`. One class per file (`ArchTest`).
 - Read config through `Support\Settings` (typed, fails naming the key), never `(int) config(...)`. Type-check `mixed` SDK responses instead of calling methods on them.
-- Use `Illuminate\Support\Sleep` for delays, so tests can `Sleep::fake()`.
+- Use `Illuminate\Support\Sleep` for the package's own delays, so tests can `Sleep::fake()`. BeeL API retries and their waits are the SDK's: never add retries in the transport.
 
 ## Git
 

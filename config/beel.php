@@ -49,12 +49,17 @@ return [
     // room for web requests. 0 or null disables the throttle.
     'queue_rate_limit' => 250,
     'http' => [
-        // Laravel owns retries; SDK maxRetries is disabled to prevent stacked retries. Set retries to 0
-        // to disable them (null means the default).
         'timeout' => 30,
         'connect_timeout' => 10,
+        // lenorix/beel-sdk retries 429s, 5xx and connection errors, only for requests that are safe to
+        // repeat (idempotent methods, or POSTs with an Idempotency-Key). 0 disables retries.
         'retries' => 3,
-        'retry_delay_ms' => 100,
+        // First backoff delay when BeeL doesn't say how long to wait; it grows exponentially.
+        'retry_delay_ms' => 500,
+        // Longest wait between attempts. BeeL's rate limit window is 60 s, so a 429 is waited out; a
+        // longer wait isn't: BeelRateLimitError is thrown with retryAfterSeconds instead. Waits block
+        // the PHP process: in queued jobs prefer retries 0 and release($e->retryAfterSeconds).
+        'max_retry_delay_ms' => 60_000,
         // Additional Guzzle options passed through Laravel's PendingRequest.
         'options' => [],
     ],
