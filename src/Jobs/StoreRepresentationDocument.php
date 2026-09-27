@@ -7,19 +7,18 @@ namespace Lenorix\LaravelBeel\Jobs;
 use Lenorix\LaravelBeel\BeelCompany;
 
 /**
- * Stores an issued invoice's PDF on a Laravel disk from the queue. See StoreBeelDocument for how it waits, retries
+ * Stores the company's AEAT representation document on a Laravel disk from the queue. See StoreBeelDocument for how it waits, retries
  * and fails.
  *
- *     StoreInvoicePdf::dispatch($invoiceId, 'invoices/A-42.pdf', disk: 's3');
+ *     StoreRepresentationDocument::dispatch('aeat/representation.pdf', disk: 's3', companyId: $companyId);
  */
-final class StoreInvoicePdf extends StoreBeelDocument
+final class StoreRepresentationDocument extends StoreBeelDocument
 {
     /**
      * @param  string|null  $disk  Disk name; null uses the default disk.
      * @param  array<string, mixed>  $options  Passed to the disk (e.g. `visibility`).
      */
     public function __construct(
-        public readonly string $invoiceId,
         string $path,
         ?string $disk = null,
         bool $overwrite = false,
@@ -32,6 +31,6 @@ final class StoreInvoicePdf extends StoreBeelDocument
 
     protected function store(BeelCompany $company): void
     {
-        $company->invoices->storePdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
+        $company->storeRepresentationDocument($this->path, $this->disk, $this->overwrite, $this->options);
     }
 }

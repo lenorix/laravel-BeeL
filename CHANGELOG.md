@@ -38,6 +38,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
   - it refuses an existing file unless `overwrite: true`.
 
   `Jobs\StoreInvoicePdf` does the same from the queue: it waits for BeeL's `Retry-After` while the PDF is generated, treats an existing file as done and fails at once on errors retrying can't fix. Its payload is encrypted, since it may hold an API key.
+  `StoreInvoicePreview`, `StoreInvoicePreviewPdf`, `StoreInvoicePdfArchive`, `StoreInvoiceExport` and `StoreRepresentationDocument` do the same for the other documents, on the shared `Jobs\StoreBeelDocument` base.
 
   `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
 - Per-type webhook events in `Events\Webhooks` (`InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...), dispatched right after `BeelWebhookReceived` for known types, with typed `data()`.
