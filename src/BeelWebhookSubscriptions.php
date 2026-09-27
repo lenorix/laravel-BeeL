@@ -56,22 +56,17 @@ final class BeelWebhookSubscriptions
     }
 
     /**
-     * The events BeeL only sends to the account that provisioned a managed account (integrators).
-     *
-     * BeeL's webhook docs (https://docs.beel.es/webhooks/events) list three; lenorix/beel-sdk 0.6's
-     * WebhookEventType::isProvisionerOnly() only flags account.*, so the documented list is kept here
-     * and anything the SDK flags is added to it.
+     * The events BeeL only sends to the account that provisioned a managed account (integrators):
+     * account.claimed, company.created and representation.signed.
      *
      * @return list<string>
      */
     public static function provisionerEvents(): array
     {
-        $flagged = array_map(
+        return array_values(array_map(
             fn (WebhookEventType $type) => $type->value,
             array_filter(WebhookEventType::cases(), fn (WebhookEventType $type) => $type->isProvisionerOnly()),
-        );
-
-        return array_values(array_unique(['account.claimed', 'company.created', 'representation.signed', ...$flagged]));
+        ));
     }
 
     /**

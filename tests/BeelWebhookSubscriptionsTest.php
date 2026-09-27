@@ -196,3 +196,7 @@ it('leaves the account relationship to BeeL by default and refuses unknown ones'
     Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && ! isset($r['account_relationship']));
     Http::assertSentCount(2);
 });
+
+it('treats exactly the three events BeeL documents as provisioner-only', function () {
+    expect(BeelWebhookSubscriptions::provisionerEvents())->toEqualCanonicalizing(['account.claimed', 'company.created', 'representation.signed']);
+});
