@@ -24,7 +24,9 @@ use Lenorix\BeelSdk\Resource\CompanyScope;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Support\DocumentKind;
+use Lenorix\LaravelBeel\Support\DocumentResponse;
 use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Company scope decorator that keeps the SDK resources intact and exposes its raw client.
@@ -82,6 +84,24 @@ final class BeelCompany
             fn (): string => $this->scope->representation->documentLink()->getDownloadUrl(),
             DocumentKind::Pdf, "the representation document of company {$this->companyId}", $path, $disk, $overwrite, $options,
         );
+    }
+
+    /**
+     * Answer with the company's AEAT representation document as a download, streamed from BeeL's
+     * pre-signed URL without storing it.
+     *
+     * @throws DocumentDownloadFailed
+     * @throws BeelApiError From BeeL, e.g. 400 while the document has not been generated.
+     */
+    public function downloadRepresentationDocument(?string $fileName = null): StreamedResponse
+    {
+        $document = "the representation document of company {$this->companyId}";
+        [$body, $length, $type] = Container::getInstance()->make(SignedDownloadStorage::class)->openSigned(
+            fn (): string => $this->scope->representation->documentLink()->getDownloadUrl(),
+            $document,
+        );
+
+        return DocumentResponse::make($body, $length, $type, DocumentKind::Pdf, $document, $fileName ?? 'representation.pdf');
     }
 
     public function __get(string $name): mixed

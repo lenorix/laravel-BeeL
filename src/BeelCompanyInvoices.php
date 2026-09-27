@@ -9,12 +9,15 @@ use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Exception\BeelNotReadyError;
 use Lenorix\BeelSdk\Generated\Model\CreateInvoiceExportRequest;
 use Lenorix\BeelSdk\Generated\Model\CreateInvoicePdfArchiveRequest;
+use Lenorix\BeelSdk\Http\BinaryDownload;
 use Lenorix\BeelSdk\Resource\Company\CompanyInvoicesResource;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\Support\DocumentKind;
+use Lenorix\LaravelBeel\Support\DocumentResponse;
 use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * The SDK's company invoices resource plus storePdf(). Every other method and property is the
@@ -151,6 +154,96 @@ final class BeelCompanyInvoices
             fn () => $this->resource->previewPdf($invoiceId),
             DocumentKind::Pdf, "the PDF preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
         );
+    }
+
+    /**
+     * Answer with an issued invoice's PDF as a download, streamed from BeeL's pre-signed URL to the
+     * browser without storing it: `return $company->invoices->downloadPdf($id);` in a controller.
+     *
+     * BeeL is asked, and the file's signature checked, before the response exists, so failures
+     * throw here and the app can still answer with an error.
+     *
+     * @param  string|null  $fileName  Defaults to BeeL's (e.g. `A-2025-0042.pdf`).
+     *
+     * @throws InvoicePdfNotReady BeeL is still generating the PDF; try again shortly.
+     * @throws DocumentDownloadFailed Every attempt failed.
+     */
+    public function downloadPdf(string $invoiceId, ?string $fileName = null): StreamedResponse
+    {
+        $name = null;
+        [$body, $length, $type] = $this->storage()->openSigned(function () use ($invoiceId, &$name): string {
+            try {
+                $pdf = $this->resource->getPdf($invoiceId);
+            } catch (BeelNotReadyError $notReady) {
+                throw new InvoicePdfNotReady($invoiceId, $notReady->retryAfter, $notReady);
+            }
+            $name = $pdf->getFileName();
+
+            return $pdf->getDownloadUrl();
+        }, "the PDF of invoice {$invoiceId}");
+
+        return DocumentResponse::make($body, $length, $type, DocumentKind::Pdf, "the PDF of invoice {$invoiceId}", $fileName ?? $name ?? "invoice-{$invoiceId}.pdf");
+    }
+
+    /**
+     * Answer with an invoice's preview image as a download (drafts included), streamed without storing.
+     * Its type comes from the file itself: BeeL's sandbox serves PNG under a .webp name.
+     *
+     * @throws DocumentDownloadFailed
+     */
+    public function downloadPreview(string $invoiceId, ?string $fileName = null): StreamedResponse
+    {
+        [$body, $length, $type] = $this->storage()->openSigned(
+            fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
+            "the preview of invoice {$invoiceId}",
+        );
+
+        return DocumentResponse::make($body, $length, $type, DocumentKind::Image, "the preview of invoice {$invoiceId}", $fileName ?? "invoice-{$invoiceId}-preview");
+    }
+
+    /**
+     * Answer with a draft's PDF preview as a download, streamed from BeeL's response without storing.
+     *
+     * @throws DocumentDownloadFailed
+     * @throws BeelApiError From BeeL, e.g. for an issued invoice.
+     */
+    public function downloadPreviewPdf(string $invoiceId, ?string $fileName = null): StreamedResponse
+    {
+        return $this->respond($this->resource->previewPdf($invoiceId), DocumentKind::Pdf, "the PDF preview of invoice {$invoiceId}", $fileName, "invoice-{$invoiceId}-preview.pdf");
+    }
+
+    /**
+     * Answer with a ZIP of up to 500 invoice PDFs as a download, streamed from BeeL's response without
+     * storing. Invoices without a PDF are left out (BeeL's `X-Bulk-Failed` count is lost here; use
+     * storePdfArchive() when you need the counts).
+     *
+     * @param  CreateInvoicePdfArchiveRequest|array<string, mixed>  $request
+     *
+     * @throws DocumentDownloadFailed
+     * @throws BeelApiError From BeeL, e.g. when no PDF is available.
+     */
+    public function downloadPdfArchive(CreateInvoicePdfArchiveRequest|array $request, ?string $fileName = null): StreamedResponse
+    {
+        return $this->respond($this->resource->createPdfArchive($request), DocumentKind::Zip, 'the invoice PDF archive', $fileName, 'invoices.zip');
+    }
+
+    /**
+     * Answer with a spreadsheet (`.xlsx`) export of up to 50,000 invoices as a download, streamed from
+     * BeeL's response without storing.
+     *
+     * @param  CreateInvoiceExportRequest|array<string, mixed>  $request
+     *
+     * @throws DocumentDownloadFailed
+     * @throws BeelApiError From BeeL, e.g. `EXPORT_SELECTION_REQUIRED`.
+     */
+    public function downloadExport(CreateInvoiceExportRequest|array $request, ?string $fileName = null): StreamedResponse
+    {
+        return $this->respond($this->resource->export($request), DocumentKind::Zip, 'the invoice export', $fileName, 'invoices.xlsx');
+    }
+
+    private function respond(BinaryDownload $file, DocumentKind $kind, string $document, ?string $fileName, string $fallback): StreamedResponse
+    {
+        return DocumentResponse::make($file->body, $file->contentLength, $file->contentType, $kind, $document, $fileName ?? $file->fileName ?? $fallback);
     }
 
     private function storage(): SignedDownloadStorage

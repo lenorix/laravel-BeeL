@@ -43,6 +43,17 @@ enum DocumentKind
         };
     }
 
+    /** The real type of a file with this head, for images whose declared type may be wrong. */
+    public function contentTypeOf(string $head): string
+    {
+        return match (true) {
+            $this !== self::Image => $this->contentType(),
+            str_starts_with($head, "\x89PNG") => 'image/png',
+            str_starts_with($head, "\xFF\xD8\xFF") => 'image/jpeg',
+            default => 'image/webp',
+        };
+    }
+
     public function label(): string
     {
         return match ($this) {

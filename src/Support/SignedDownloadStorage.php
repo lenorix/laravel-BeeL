@@ -104,6 +104,46 @@ final class SignedDownloadStorage
     /** @param array<string, mixed> $options */
     private function downloadInto(FilesystemOperator $filesystem, string $url, DocumentKind $kind, string $path, bool $overwrite, array $options, string $document): void
     {
+        [$stream, $length] = $this->requestSigned($url);
+
+        $this->writeVerified($filesystem, $stream, $length, $kind, $path, $overwrite, $options, $document, fn (string $message) => self::redact($message, $url));
+    }
+
+    /**
+     * Opens a download from one of BeeL's pre-signed URLs, retrying with a new URL like store(), for a
+     * caller that streams it somewhere else (e.g. an HTTP response). The body is not read yet.
+     *
+     * @param  \Closure(): string  $signedUrl  Asks BeeL for a fresh pre-signed URL; called once per attempt.
+     * @return array{StreamInterface, ?int, ?string} The body, its declared length and content type.
+     *
+     * @throws DocumentDownloadFailed
+     */
+    public function openSigned(\Closure $signedUrl, string $document): array
+    {
+        $attempts = max(1, Settings::int('beel.downloads.attempts', 3));
+
+        for ($attempt = 1; ; $attempt++) {
+            $url = $signedUrl();
+
+            try {
+                return $this->requestSigned($url);
+            } catch (DownloadFailure $failure) {
+                if (! $failure->retryable || $attempt >= $attempts) {
+                    throw new DocumentDownloadFailed($document, $failure->getMessage(), $attempt);
+                }
+
+                Sleep::usleep(max(0, Settings::int('beel.http.retry_delay_ms', 100)) * 1000);
+            }
+        }
+    }
+
+    /**
+     * @return array{StreamInterface, ?int, ?string} The unread body, its declared length and content type.
+     *
+     * @throws DownloadFailure
+     */
+    private function requestSigned(string $url): array
+    {
         // A plain request: the pre-signed URL carries its own authorization, so BeeL's API key must
         // never reach it, and a half-read stream can't be retried by middleware anyway.
         try {
@@ -128,8 +168,9 @@ final class SignedDownloadStorage
         // Guzzle drops Content-Length when it decodes a Content-Encoding, so a remaining one always
         // describes the bytes read here.
         $length = $response->header('Content-Length');
+        $type = $response->header('Content-Type');
 
-        $this->writeVerified($filesystem, $response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null, $kind, $path, $overwrite, $options, $document, fn (string $message) => self::redact($message, $url));
+        return [$response->toPsrResponse()->getBody(), ctype_digit($length) ? (int) $length : null, $type !== '' ? $type : null];
     }
 
     /**
