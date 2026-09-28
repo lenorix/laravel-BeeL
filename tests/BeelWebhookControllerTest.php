@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
@@ -418,4 +419,117 @@ it('logs at most one warning per reason per minute, so forged traffic cannot flo
     }
 
     Log::shouldHaveReceived('warning')->once();
+});
+
+it('tells BeeL why it refused a delivery', function () {
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => 'garbage'])
+        ->assertStatus(401)->assertExactJson(['message' => 'Invalid BeeL webhook signature or payload.']);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'wrong')])
+        ->assertStatus(503)->assertExactJson(['message' => 'BeeL webhook signature does not match the configured secret.']);
+    $bad = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => 'no'];
+    $this->postJson('/beel/webhook', $bad, ['BeeL-Signature' => signBeelPayload($bad, 'test-webhook-secret')])
+        ->assertStatus(400)->assertExactJson(['message' => 'Invalid BeeL webhook event.']);
+
+    config()->set('services.beel.webhook_secret', null);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'x')])
+        ->assertStatus(503)->assertExactJson(['message' => 'BeeL webhook secret is not configured.']);
+});
+
+it('reports a failing listener and answers 503 even with deduplication disabled', function () {
+    config()->set('beel.webhook_dedupe_seconds', 0);
+    Exceptions::fake();
+    Event::listen(BeelWebhookReceived::class, fn () => throw new RuntimeException('queue is down'));
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])
+        ->assertStatus(503)->assertExactJson(['message' => 'The BeeL webhook could not be processed; BeeL will retry it.']);
+
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'queue is down');
+});
+
+it('deduplicates for any positive number of seconds, and not for a nonsense value', function (mixed $seconds, int $dispatched) {
+    config()->set('beel.webhook_dedupe_seconds', $seconds);
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $headers = ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')];
+
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, $headers)->assertStatus(202);
+
+    Event::assertDispatchedTimes(BeelWebhookReceived::class, $dispatched);
+})->with([
+    'one second' => [1, 1],
+    'a numeric string' => ['0.5', 2],
+    'zero' => [0, 2],
+    'not a number' => ['soon', 2],
+]);
+
+it('remembers events in the configured store, under a key only the secret can derive, for exactly twice the tolerance', function () {
+    config()->set('cache.stores.webhooks', ['driver' => 'array']);
+    config()->set('beel.webhook_dedupe_store', 'webhooks');
+    config()->set('beel.webhook_dedupe_seconds', 1);
+    config()->set('beel.webhook_replay_tolerance_seconds', 300);
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $key = 'beel:webhook:'.hash_hmac('sha256', 'evt_1', 'test-webhook-secret');
+
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')])->assertStatus(202);
+
+    expect(Cache::store('webhooks')->get($key))->toBeTrue()
+        ->and(Cache::store()->has($key))->toBeFalse();
+    $this->travel(599)->seconds();
+    expect(Cache::store('webhooks')->has($key))->toBeTrue();
+    $this->travel(1)->seconds();
+    expect(Cache::store('webhooks')->has($key))->toBeFalse();
+});
+
+it('accepts a signature right at the edge of the replay tolerance', function () {
+    config()->set('beel.webhook_replay_tolerance_seconds', 3600);
+    Event::fake();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    // time() may tick once during the request: the edge is approached from inside.
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret', time() - 3599)])->assertStatus(202);
+    $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret', time() - 3602)])->assertStatus(401);
+});
+
+it('logs a warning again after a minute, in the configured store, and even when that store is down', function () {
+    config()->set('cache.stores.webhooks', ['driver' => 'array']);
+    config()->set('beel.webhook_dedupe_store', 'webhooks');
+    Log::spy();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $post = fn () => $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'wrong')])->assertStatus(503);
+
+    $post();
+    expect(Cache::store('webhooks')->has('beel:webhook:warned:signature_mismatch'))->toBeTrue();
+    $this->travel(59)->seconds();
+    $post();
+    $this->travel(1)->seconds();
+    $post();
+    Log::shouldHaveReceived('warning')->twice();
+
+    config()->set('cache.stores.broken', ['driver' => 'broken']);
+    Cache::extend('broken', fn () => Cache::repository(new class extends ArrayStore
+    {
+        public function add($key, $value, $seconds)
+        {
+            throw new RuntimeException('cache down');
+        }
+    }));
+    config()->set('beel.webhook_dedupe_store', 'broken');
+    $post();
+    Log::shouldHaveReceived('warning')->times(3);
+});
+
+it('keeps unverified header values short in the log', function () {
+    Log::spy();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+    $long = str_repeat('k', 100);
+
+    $this->postJson("/beel/webhook/{$long}", $payload, ['BeeL-Signature' => signBeelPayload($payload, 'wrong'), 'BeeL-Delivery-Id' => $long])->assertStatus(503);
+
+    Log::shouldHaveReceived('warning')->withArgs(fn (string $message, array $context) => $context['webhook_key'] === str_repeat('k', 64)
+        && $context['unverified_delivery_id'] === str_repeat('k', 64));
 });

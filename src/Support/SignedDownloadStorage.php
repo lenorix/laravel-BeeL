@@ -48,29 +48,15 @@ final class SignedDownloadStorage
             throw new DocumentAlreadyExists($document, $path);
         }
 
-        $attempts = max(1, Settings::int('beel.downloads.attempts', 3));
         // An image's real format can differ from what BeeL declares: let the disk infer it rather than
         // stamp a possibly wrong type.
         if ($kind !== DocumentKind::Image) {
             $options += ['ContentType' => $kind->contentType()];
         }
 
-        for ($attempt = 1; ; $attempt++) {
-            // A fresh URL every attempt: they expire after five minutes.
-            $url = $signedUrl();
+        $this->withFreshUrls($signedUrl, $document, fn (string $url) => $this->downloadInto($filesystem, $url, $kind, $path, $overwrite, $options, $document));
 
-            try {
-                $this->downloadInto($filesystem, $url, $kind, $path, $overwrite, $options, $document);
-
-                return $path;
-            } catch (DownloadFailure $failure) {
-                if (! $failure->retryable || $attempt >= $attempts) {
-                    throw new DocumentDownloadFailed($document, $failure->getMessage(), $attempt);
-                }
-
-                Sleep::usleep(max(0, Settings::int('beel.http.retry_delay_ms', 100)) * 1000);
-            }
-        }
+        return $path;
     }
 
     /**
@@ -120,19 +106,35 @@ final class SignedDownloadStorage
      */
     public function openSigned(\Closure $signedUrl, string $document): array
     {
+        return $this->withFreshUrls($signedUrl, $document, fn (string $url) => $this->requestSigned($url));
+    }
+
+    /**
+     * Runs $attempt with a fresh pre-signed URL (they expire after five minutes) until it succeeds, a
+     * failure is not retryable, or beel.downloads.attempts run out, pausing beel.http.retry_delay_ms
+     * between attempts.
+     *
+     * @template T
+     *
+     * @param  \Closure(): string  $signedUrl
+     * @param  \Closure(string): T  $attempt
+     * @return T
+     *
+     * @throws DocumentDownloadFailed
+     */
+    private function withFreshUrls(\Closure $signedUrl, string $document, \Closure $attempt): mixed
+    {
         $attempts = max(1, Settings::int('beel.downloads.attempts', 3));
 
-        for ($attempt = 1; ; $attempt++) {
-            $url = $signedUrl();
-
+        for ($number = 1; ; $number++) {
             try {
-                return $this->requestSigned($url);
+                return $attempt($signedUrl());
             } catch (DownloadFailure $failure) {
-                if (! $failure->retryable || $attempt >= $attempts) {
-                    throw new DocumentDownloadFailed($document, $failure->getMessage(), $attempt);
+                if (! $failure->retryable || $number >= $attempts) {
+                    throw new DocumentDownloadFailed($document, $failure->getMessage(), $number);
                 }
 
-                Sleep::usleep(max(0, Settings::int('beel.http.retry_delay_ms', 100)) * 1000);
+                Sleep::usleep(max(0, Settings::int('beel.http.retry_delay_ms', 500)) * 1000);
             }
         }
     }
