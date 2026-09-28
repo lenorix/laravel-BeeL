@@ -79,7 +79,7 @@ final class SignedDownloadStorage
         $file = $download();
 
         try {
-            $this->writeVerified($filesystem, $file->body, $file->contentLength, $kind, $path, $overwrite, $options + ['ContentType' => $file->contentType ?? $kind->contentType()], $document, fn (string $message) => $message);
+            $this->writeVerified($filesystem, $file->body, $file->contentLength, $kind, $path, $overwrite, $options + ['ContentType' => DocumentKind::withCharset($file->contentType ?? $kind->contentType(), $file->charset)], $document, fn (string $message) => $message);
         } catch (DownloadFailure $failure) {
             throw new DocumentDownloadFailed($document, $failure->getMessage(), 1);
         }

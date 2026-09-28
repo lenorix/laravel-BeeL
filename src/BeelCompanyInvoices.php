@@ -243,7 +243,7 @@ final class BeelCompanyInvoices
 
     private function respond(BinaryDownload $file, DocumentKind $kind, string $document, ?string $fileName, string $fallback): StreamedResponse
     {
-        return DocumentResponse::make($file->body, $file->contentLength, $file->contentType, $kind, $document, $fileName ?? $file->fileName ?? $fallback);
+        return DocumentResponse::make($file->body, $file->contentLength, DocumentKind::withCharset($file->contentType, $file->charset), $kind, $document, $fileName ?? $file->fileName ?? $fallback);
     }
 
     private function storage(): SignedDownloadStorage

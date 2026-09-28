@@ -160,13 +160,13 @@ it('streams a large export to the browser with small, constant memory', function
         ->and(memory_get_peak_usage() - $before)->toBeLessThan(4 * 1024 * 1024);
 });
 
-it('answers 200 with the type BeeL declares, told not to sniff it', function () {
-    Http::fake(['*/invoices/exports' => Http::response("PK\x03\x04sheet", 200, ['Content-Type' => 'text/csv'])]);
+it('answers 200 with the type and charset BeeL declares, told not to sniff it', function () {
+    Http::fake(['*/invoices/exports' => Http::response("PK\x03\x04sheet", 200, ['Content-Type' => 'text/csv; charset=UTF-8'])]);
 
     $response = app(BeelManager::class)->company()->invoices->downloadExport(['invoice_ids' => ['a']]);
 
     expect($response->getStatusCode())->toBe(200)
-        ->and($response->headers->get('Content-Type'))->toBe('text/csv')
+        ->and($response->headers->get('Content-Type'))->toBe('text/csv; charset=UTF-8')
         ->and($response->headers->get('X-Content-Type-Options'))->toBe('nosniff');
 });
 

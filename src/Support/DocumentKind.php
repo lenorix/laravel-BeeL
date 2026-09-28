@@ -62,4 +62,10 @@ enum DocumentKind
             self::Zip => 'a ZIP file',
         };
     }
+
+    /** $contentType with BeeL's charset (e.g. a UTF-8 CSV), so browsers and disks decode the text right. */
+    public static function withCharset(?string $contentType, ?string $charset): ?string
+    {
+        return $contentType !== null && $charset !== null && $charset !== '' ? "{$contentType}; charset={$charset}" : $contentType;
+    }
 }

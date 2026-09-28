@@ -1,6 +1,6 @@
 # lenorix/beel-sdk
 
-Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.6.1 source on 2026-09-26. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
+Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.6.2 source on 2026-09-28. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
 
 In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Lenorix\LaravelBeel\BeelManager` (see `laravel-package.md`), never with `new Beel(...)`.
 
@@ -12,7 +12,7 @@ In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Leno
 - Per-call options: every resource has `withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: ..., headers: [...]))`, returning a copy; sub-resources inherit them (`$company->withOptions(...)->invoices`). Applied by the transport, so they work on every operation; the same key is resent on automatic retries. `Authorization`, `Host`, `Content-Type` and `Content-Length` are rejected.
 - Return types are concrete models (`void` for 204s). Request models also accept arrays in API format (`['invoice_ids' => [...]]`).
 - Retries (`maxRetries`, `retryDelayMs`, `maxRetryDelayMs`; per call `RequestOptions(maxRetries:, retryServerErrors:)`): 429s always; 5xx and connection errors only for idempotent methods or requests with an `Idempotency-Key` (auto-added to POSTs); never archive/export downloads. It waits what BeeL asks; a wait over `maxRetryDelayMs` throws `BeelRateLimitError` (`retryAfterSeconds`) instead. Waits block PHP.
-- Files: `createPdfArchive()`, `export()`, `invoices->previewPdf()` and `$beel->templates` return `Lenorix\BeelSdk\Http\BinaryDownload` (`body` stream, `fileName`, `contentType`, `contentLength`, `counts`).
+- Files: `createPdfArchive()`, `export()`, `invoices->previewPdf()` and `$beel->templates` return `Lenorix\BeelSdk\Http\BinaryDownload` (`body` stream, `fileName`, `contentType` without parameters, `charset` such as `utf-8` or null, `contentLength`, `counts`).
 - `$beel->request($method, $path, ...)` calls any JSON route; `$beel->getLastResponse()` gives the exact last response.
 - Company resources added in 0.5: `representation` (`get`, `generate`, `documentLink`, `submit`, `cancel`), `activations` (Test/Live; `BeelPaymentRequiredError::$checkoutUrl` on 402), `invoiceCustomization`, `logo`; account `requestLogs`; account imports; `$beel->templates`.
 - Enums: `Environment`, `VeriFactuSubmissionStatus`, `RecurringInvoicePauseReason`, `WebhookAccountRelationship`; `WebhookVerifier::eventFromPayload()`, `WebhookEventType::isProvisionerOnly()` (the three integrator-only events).

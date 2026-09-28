@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
+First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.2+.
 
 ### Added
 
@@ -48,7 +48,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
 - `Jobs\Middleware\ThrottleBeelRequests` keeps queued jobs under BeeL's rate limit per API key (`beel.queue_rate_limit`, 250/min), releasing them until the window resets instead of provoking 429s. `StoreInvoicePdf` uses it and retries within a day, counting only exceptions.
 - Config values are read typed: numbers may come as env strings, but a wrong type (e.g. an array for `beel.http.timeout`) fails with an error naming the key instead of silently becoming 0.
 - `LaravelNetworkException` and `LaravelClientException` autoload like any other class.
-- Direct downloads, without storing: `$company->invoices->downloadPdf($id, ?fileName)`, `downloadPreview()`, `downloadPreviewPdf()`, `downloadPdfArchive($request, ?fileName)`, `downloadExport($request, ?fileName)` and `$company->downloadRepresentationDocument(?fileName)` return a `StreamedResponse` that streams the file to the browser in `beel.downloads.buffer_bytes` chunks. The file's signature is checked before the response exists, so failures throw `DocumentDownloadFailed` in the controller. File names default to BeeL's, get an ASCII fallback, and slashes (as in invoice numbers) become underscores.
+- Direct downloads, without storing: `$company->invoices->downloadPdf($id, ?fileName)`, `downloadPreview()`, `downloadPreviewPdf()`, `downloadPdfArchive($request, ?fileName)`, `downloadExport($request, ?fileName)` and `$company->downloadRepresentationDocument(?fileName)` return a `StreamedResponse` that streams the file to the browser in `beel.downloads.buffer_bytes` chunks. The file's signature is checked before the response exists, so failures throw `DocumentDownloadFailed` in the controller. The `Content-Type` keeps BeeL's charset (a UTF-8 CSV stays UTF-8), also on stored files. File names default to BeeL's, get an ASCII fallback, and slashes (as in invoice numbers) become underscores.
 - Document downloads count bytes by position, so storage adapters that read a body twice (the AWS SDK computes a checksum first) no longer reject a valid download as too long.
 - The typed webhook events' `data()` checks the model it returns and throws `UnexpectedValueException` naming the event if the payload doesn't match.
 - `$company->invoices->storePdfArchive()`, `storeExport()` and `storePreviewPdf()` store the files BeeL returns in the response body (invoice PDF archive, spreadsheet export, draft PDF preview), streamed from the socket and verified like `storePdf()`, returning a `StoredDocument` with BeeL's counts. `BeelFake::api()` fakes them.
