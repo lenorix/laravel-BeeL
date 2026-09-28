@@ -158,6 +158,7 @@ final class BeelFake
                 'submission_status' => 'ACCEPTED',
             ],
             'pdf_download_url' => '/v1/companies/7c9e6679-7425-40de-944b-e07fc1f90ae7/invoices/f47ac10b-58cc-4372-a567-0e02b2c3d479/pdf',
+            'external_ref' => null,
             'send_automatically' => false,
             'sent_at' => null,
             'sending_history' => [],

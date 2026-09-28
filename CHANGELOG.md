@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-28
+
 First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.2+.
 
 ### Added
@@ -66,3 +68,6 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.2+.
 - `BeelFake::api()` (`Testing\BeelApiFake`) fakes BeeL operations by name (`->issueInvoice()`, `->listCustomers()`, `->invoicePdf()`, ...), with answers in order, so app tests don't depend on BeeL's routes.
 - `Testing\BeelFake` for faking the API with `Http::fake()`: `ok()`, `page()`, `cursorPage()` and `error()` responses in BeeL's format, and realistic resources (`invoice()`, `customer()`, `identity()`, `issuingReadiness()`, `managedAccount()`, `webhookSubscription()`, `webhookDelivery()`, `webhookData()`) checked against the SDK.
 - Laravel Boost guidelines and a `beel-invoicing` skill for AI coding agents, covering this package, the SDK, BeeL's API, VERI*FACTU rules, and what is out of scope (B2B e-invoicing, TicketBAI, SII).
+
+[Unreleased]: https://github.com/lenorix/laravel-BeeL/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/lenorix/laravel-BeeL/releases/tag/v0.1.0
