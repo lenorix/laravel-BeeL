@@ -20,7 +20,7 @@
     "require": {
         "php": "^8.4",
         "illuminate/contracts": "^13.0",
-        "lenorix/beel-sdk": "^0.6.2",
+        "lenorix/beel-sdk": "^0.8.0",
         "spatie/laravel-package-tools": "^1.16"
     },
     "require-dev": {

@@ -258,3 +258,10 @@ it('does not ask again when the file is not there (a 403 is retried: the signed 
     expect(fn () => app(BeelManager::class)->company()->invoices->downloadPdf('inv-1'))->toThrow(DocumentDownloadFailed::class);
     expect($calls)->toBe(1);
 });
+
+it('throws before answering while an issued invoice\'s preview waits for its PDF', function () {
+    Http::fake(['*/invoices/inv-1/preview' => Http::response(null, 202, ['Retry-After' => '4'])]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->downloadPreview('inv-1'))
+        ->toThrow(fn (InvoicePdfNotReady $e) => expect($e->retryAfter)->toBe(4));
+});

@@ -103,7 +103,8 @@ final class BeelWebhookSubscriptions
         $created = self::withSecret($account->webhooks->create($request));
 
         try {
-            $store($created->getSecret());
+            // Without a secret nothing could ever be verified: removed like a failed store.
+            $store(self::secretOf($created));
         } catch (\Throwable $storeFailure) {
             try {
                 $account->webhooks->delete($created->getId());
@@ -135,10 +136,13 @@ final class BeelWebhookSubscriptions
         $existing = $this->findIn($account, $url) ?? throw new WebhookSubscriptionNotFound($url);
         $rotated = self::withSecret($account->webhooks->rotateSecret($existing->getId()));
 
+        // BeeL invalidated the old secret already: without the new one, only rotating again helps.
+        $secret = self::secretOf($rotated);
+
         try {
-            $store($rotated->getSecret());
+            $store($secret);
         } catch (\Throwable $storeFailure) {
-            throw new RotatedWebhookSecretNotStored($existing->getId(), $rotated->getSecret(), $storeFailure);
+            throw new RotatedWebhookSecretNotStored($existing->getId(), $secret, $storeFailure);
         }
 
         return BeelWebhookSubscription::fromSdk($existing);
@@ -188,6 +192,15 @@ final class BeelWebhookSubscriptions
     }
 
     /** The SDK types these responses as mixed; anything but a subscription with its secret is a bug to surface. */
+    private static function secretOf(WebhookSubscriptionWithSecret $subscription): string
+    {
+        $secret = $subscription->getSecret();
+
+        return is_string($secret) && $secret !== ''
+            ? $secret
+            : throw new \UnexpectedValueException("BeeL returned no secret for webhook subscription {$subscription->getId()}.");
+    }
+
     private static function withSecret(mixed $response): WebhookSubscriptionWithSecret
     {
         return $response instanceof WebhookSubscriptionWithSecret

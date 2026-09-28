@@ -29,7 +29,7 @@ final class BeelWebhookSubscription
             $subscription->getUrl(),
             $subscription->getEvents(),
             $subscription->getActive(),
-            $subscription->isInitialized('accountRelationship') ? $subscription->getAccountRelationship() : 'own',
+            ($subscription->isInitialized('accountRelationship') ? $subscription->getAccountRelationship() : null) ?? 'own',
         );
     }
 }

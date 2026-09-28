@@ -86,12 +86,13 @@ final class BeelCompanyInvoices
      * @param  array<string, mixed>  $options  Passed to the disk; no `ContentType` is forced.
      *
      * @throws DocumentAlreadyExists The path exists and `$overwrite` is false.
+     * @throws InvoicePdfNotReady An issued invoice's preview waits for its PDF; try again shortly.
      * @throws DocumentDownloadFailed Every attempt failed; nothing was written to `$path`.
      */
     public function storePreview(string $invoiceId, string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string
     {
         return $this->storage()->store(
-            fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
+            fn (): string => $this->previewUrl($invoiceId),
             DocumentKind::Image, "the preview of invoice {$invoiceId}", $path, $disk, $overwrite, $options,
         );
     }
@@ -189,12 +190,13 @@ final class BeelCompanyInvoices
      * Answer with an invoice's preview image as a download (drafts included), streamed without storing.
      * Its type comes from the file itself: BeeL's sandbox serves PNG under a .webp name.
      *
+     * @throws InvoicePdfNotReady An issued invoice's preview waits for its PDF; try again shortly.
      * @throws DocumentDownloadFailed
      */
     public function downloadPreview(string $invoiceId, ?string $fileName = null): StreamedResponse
     {
         [$body, $length, $type] = $this->storage()->openSigned(
-            fn (): string => $this->resource->preview($invoiceId)->getImageUrl(),
+            fn (): string => $this->previewUrl($invoiceId),
             "the preview of invoice {$invoiceId}",
         );
 
@@ -262,5 +264,15 @@ final class BeelCompanyInvoices
         $result = $this->resource->{$name}(...$arguments);
 
         return $result instanceof CompanyInvoicesResource ? new self($result) : $result;
+    }
+
+    /** BeeL renders an issued invoice's preview from its PDF, so it answers 202 until the PDF exists. */
+    private function previewUrl(string $invoiceId): string
+    {
+        try {
+            return $this->resource->preview($invoiceId)->getImageUrl();
+        } catch (BeelNotReadyError $notReady) {
+            throw new InvoicePdfNotReady($invoiceId, $notReady->retryAfter, $notReady);
+        }
     }
 }

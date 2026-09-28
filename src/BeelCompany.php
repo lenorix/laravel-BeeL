@@ -81,7 +81,7 @@ final class BeelCompany
     public function storeRepresentationDocument(string $path, ?string $disk = null, bool $overwrite = false, array $options = []): string
     {
         return Container::getInstance()->make(SignedDownloadStorage::class)->store(
-            fn (): string => $this->scope->representation->documentLink()->getDownloadUrl(),
+            fn (): string => $this->representationDocumentUrl(),
             DocumentKind::Pdf, "the representation document of company {$this->companyId}", $path, $disk, $overwrite, $options,
         );
     }
@@ -97,11 +97,17 @@ final class BeelCompany
     {
         $document = "the representation document of company {$this->companyId}";
         [$body, $length, $type] = Container::getInstance()->make(SignedDownloadStorage::class)->openSigned(
-            fn (): string => $this->scope->representation->documentLink()->getDownloadUrl(),
+            fn (): string => $this->representationDocumentUrl(),
             $document,
         );
 
         return DocumentResponse::make($body, $length, $type, DocumentKind::Pdf, $document, $fileName ?? 'representation.pdf');
+    }
+
+    private function representationDocumentUrl(): string
+    {
+        return $this->scope->representation->documentLink()->getDownloadUrl()
+            ?? throw new \UnexpectedValueException("BeeL returned no download URL for the representation document of company {$this->companyId}.");
     }
 
     public function __get(string $name): mixed

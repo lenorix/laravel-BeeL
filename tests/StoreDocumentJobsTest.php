@@ -198,3 +198,9 @@ it('fails at once only on client errors retrying can not fix', function (int $st
     'request timeout' => [408, false],
     'server error' => [500, false],
 ]);
+
+it('goes back to the queue while an issued invoice\'s preview waits for its PDF', function () {
+    Http::fake(['*/invoices/inv-1/preview' => Http::response(null, 202, ['Retry-After' => '4'])]);
+
+    runDocumentJob(new StoreInvoicePreview('inv-1', 'p.png', disk: 'docs'))->assertReleased(4);
+});

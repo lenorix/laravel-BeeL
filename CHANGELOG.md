@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `lenorix/beel-sdk` 0.8.0, generated from BeeL's contract as published on 2026-09-28: simplified-invoice exchanges (`createSimplifiedExchange()`), an invoice's VERI*FACTU records (`listVerifactuRecords()`), `issued_in_error` when voiding, and the new corrective, surcharge and IRPF fields. Optional fields BeeL leaves out now read as `null` in the SDK's models.
+- `storePreview()`, `downloadPreview()` and `StoreInvoicePreview` treat an issued invoice's preview like its PDF: `InvoicePdfNotReady` (or a release, in the job) while BeeL generates it.
+- The SDK's `BeelUnexpectedResponseError` (a success status it does not know, so the request may have succeeded) adds its `status_code` and `request_id` to the log context like other BeeL errors.
+- A webhook subscription BeeL returns without a secret is deleted and reported, instead of storing an empty secret; a rotation without one fails naming the subscription. `beel:retry-webhook-deliveries` skips delivery logs that lack their id, event, time or attempt number.
+
 ## [0.1.0] - 2026-09-28
 
-First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.2+.
+First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.8.0+.
 
 ### Added
 

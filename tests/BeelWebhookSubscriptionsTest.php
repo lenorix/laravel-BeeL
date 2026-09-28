@@ -200,3 +200,22 @@ it('leaves the account relationship to BeeL by default and refuses unknown ones'
 it('treats exactly the three events BeeL documents as provisioner-only', function () {
     expect(BeelWebhookSubscriptions::provisionerEvents())->toEqualCanonicalizing(['account.claimed', 'company.created', 'representation.signed']);
 });
+
+it('removes a new subscription BeeL returned without a secret, since nothing could be verified', function () {
+    fakeSubscriptionsApi(secret: '');
+    $stored = false;
+
+    expect(fn () => app(BeelWebhookSubscriptions::class)->subscribe(function () use (&$stored) {
+        $stored = true;
+    }, webhookKey: 'tenant-a'))->toThrow(UnexpectedValueException::class, 'no secret');
+
+    expect($stored)->toBeFalse();
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'DELETE' && str_ends_with(parse_url($r->url(), PHP_URL_PATH), '/webhooks/wh-new'));
+});
+
+it('fails clearly when a rotation returns no secret', function () {
+    fakeSubscriptionsApi([tenantSubscription()], '');
+
+    expect(fn () => app(BeelWebhookSubscriptions::class)->rotate(fn () => null, webhookKey: 'tenant-a'))
+        ->toThrow(UnexpectedValueException::class, 'no secret for webhook subscription wh-1');
+});

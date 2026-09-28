@@ -3,6 +3,7 @@
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Http;
 use Lenorix\BeelSdk\Exception\BeelApiError;
+use Lenorix\BeelSdk\Exception\BeelUnexpectedResponseError;
 use Lenorix\LaravelBeel\BeelHttpClientFactory;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\ConfigCredentialsResolver;
@@ -67,4 +68,19 @@ it('adds the BeeL request id, error code and status to the log context of report
         ->and($handler->buildContextForException(new RuntimeException('Issuing failed', previous: new LogicException('step', previous: $error))))->toMatchArray($expected)
         ->and($handler->buildContextForException($error))->not->toHaveKey('details') // may echo submitted NIFs or amounts
         ->and($handler->buildContextForException(new RuntimeException('unrelated')))->not->toHaveKey('request_id');
+});
+
+it('adds the status and request id of a success BeeL answered that the SDK does not know', function () {
+    config()->set('services.beel.key', 'beel_sk_test_fake');
+    config()->set('services.beel.company_id', 'company-1');
+    config()->set('beel.http.retries', 0);
+    Http::fake(['*' => Http::response(['success' => true, 'data' => ['queued' => true]], 207, ['X-Request-Id' => BeelFake::REQUEST_ID])]);
+
+    try {
+        app(BeelManager::class)->company()->invoices->issue('inv-1');
+    } catch (BeelUnexpectedResponseError $error) {
+    }
+
+    expect(app(ExceptionHandler::class)->buildContextForException(new RuntimeException('Issuing failed', previous: $error)))
+        ->toMatchArray(['status_code' => 207, 'request_id' => BeelFake::REQUEST_ID]);
 });

@@ -111,7 +111,7 @@ final class RetryWebhookDeliveriesCommand extends Command
             }
 
             $deliveries
-                ->groupBy(fn (WebhookDeliveryLog $log) => $log->getWebhookEventId())
+                ->groupBy(fn (WebhookDeliveryLog $log): string => (string) $log->getWebhookEventId())
                 ->each(fn (Collection $attempts, string $eventId) => $this->handleEvent($account, $webhookId, $eventId, $attempts, $cutoff, $maxAttempts));
         }
     }
@@ -119,18 +119,18 @@ final class RetryWebhookDeliveriesCommand extends Command
     /** @param Collection<int, WebhookDeliveryLog> $attempts */
     private function handleEvent(BeelAccount $account, string $webhookId, string $eventId, Collection $attempts, Carbon $cutoff, int $maxAttempts): void
     {
-        if ($attempts->contains(fn (WebhookDeliveryLog $log) => $log->getSuccess())) {
+        if ($attempts->contains(fn (WebhookDeliveryLog $log): bool => $log->getSuccess() === true)) {
             return;
         }
 
-        $firstAttemptAt = $attempts->min(fn (WebhookDeliveryLog $log) => $log->getDeliveredAt()->getTimestamp());
+        $firstAttemptAt = $attempts->min(fn (WebhookDeliveryLog $log) => $log->getDeliveredAt()?->getTimestamp() ?? 0);
         if ($firstAttemptAt < $cutoff->getTimestamp()) {
             return;
         }
 
         /** @var WebhookDeliveryLog $latest */
         $latest = $attempts->sortByDesc(fn (WebhookDeliveryLog $log) => $log->getAttemptNumber())->first();
-        if ($latest->getDeliveredAt()->getTimestamp() > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()) {
+        if (($latest->getDeliveredAt()?->getTimestamp() ?? 0) > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()) {
             return;
         }
         $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId} of account {$account->accountId}";
@@ -148,7 +148,7 @@ final class RetryWebhookDeliveriesCommand extends Command
         }
 
         try {
-            $this->retry($account, $webhookId, $latest->getId())
+            $this->retry($account, $webhookId, (string) $latest->getId())
                 ? $this->info("Asked BeeL to retry {$label}.")
                 : $this->info("{$label} is already being retried by another run.");
         } catch (\Throwable $exception) {
@@ -217,9 +217,9 @@ final class RetryWebhookDeliveriesCommand extends Command
             accountId: $account->accountId,
             subscriptionId: $webhookId,
             eventId: $eventId,
-            eventType: $latest->getEventType(),
-            attempts: $latest->getAttemptNumber(),
-            lastDeliveryId: $latest->getId(),
+            eventType: $latest->getEventType() ?? 'unknown',
+            attempts: $latest->getAttemptNumber() ?? 0,
+            lastDeliveryId: (string) $latest->getId(),
             lastHttpStatus: $latest->getHttpStatus(),
             lastError: $latest->getErrorMessage(),
             payload: $payload,
@@ -289,7 +289,12 @@ final class RetryWebhookDeliveriesCommand extends Command
     /** @return Collection<int, WebhookDeliveryLog> */
     private function deliveries(BeelAccount $account, string $webhookId): Collection
     {
-        return collect(iterator_to_array($account->webhooks->allDeliveries($webhookId, ['limit' => self::PAGE_SIZE]), false));
+        // A log without its id, event, time or attempt number can't be grouped, dated or retried: skip it
+        // rather than guess. The getters below read them with fallbacks only to satisfy their types.
+        return collect(iterator_to_array($account->webhooks->allDeliveries($webhookId, ['limit' => self::PAGE_SIZE]), false))
+            ->filter(fn (WebhookDeliveryLog $log) => $log->getId() !== null && $log->getWebhookEventId() !== null
+                && $log->getDeliveredAt() !== null && $log->getAttemptNumber() !== null)
+            ->values();
     }
 
     /** @return list<string> */

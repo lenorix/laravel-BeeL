@@ -9,6 +9,7 @@ use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
 use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\BeelSdk\Exception\BeelNotReadyError;
+use Lenorix\BeelSdk\Exception\BeelUnexpectedResponseError;
 use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
@@ -92,9 +93,9 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
         return [];
     }
 
-    /** @phpstan-assert-if-true BeelApiError|BeelNotReadyError $exception */
+    /** @phpstan-assert-if-true BeelApiError|BeelNotReadyError|BeelUnexpectedResponseError $exception */
     private static function isBeelError(\Throwable $exception): bool
     {
-        return $exception instanceof BeelApiError || $exception instanceof BeelNotReadyError;
+        return $exception instanceof BeelApiError || $exception instanceof BeelNotReadyError || $exception instanceof BeelUnexpectedResponseError;
     }
 }

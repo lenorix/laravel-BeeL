@@ -93,15 +93,21 @@ final class CheckCommand extends Command
             return null;
         }
 
-        $credential = $identity->getCredential();
-        $this->ok("API key works: account {$identity->getAccountId()}, environment {$credential->getEnvironment()}.");
+        $environment = $identity->getCredential()?->getEnvironment() ?? 'unknown';
+        $this->ok("API key works: account {$identity->getAccountId()}, environment {$environment}.");
 
         return $identity;
     }
 
+    /** @return list<string> */
+    private static function scopes(MyIdentity $identity): array
+    {
+        return $identity->getCredential()?->getScopes() ?? [];
+    }
+
     private static function isIntegrator(MyIdentity $identity): bool
     {
-        return array_intersect(['accounts:read', 'accounts:write'], $identity->getCredential()->getScopes()) !== [];
+        return array_intersect(['accounts:read', 'accounts:write'], self::scopes($identity)) !== [];
     }
 
     private function checkAccount(MyIdentity $identity, ?string $accountId): void
@@ -130,13 +136,13 @@ final class CheckCommand extends Command
         if ($readiness->getReady()) {
             $this->ok("Company {$companyId} is ready to issue invoices.");
         } else {
-            $this->fail_("Company {$companyId} cannot issue invoices yet: ".implode(', ', $readiness->getBlockers()).'.');
+            $this->fail_("Company {$companyId} cannot issue invoices yet: ".implode(', ', $readiness->getBlockers() ?? []).'.');
         }
     }
 
     private function checkWebhooks(BeelManager $manager, string $apiKey, MyIdentity $identity): void
     {
-        $scopes = $identity->getCredential()->getScopes();
+        $scopes = self::scopes($identity);
         $missing = array_values(array_diff(['webhooks:read', 'webhooks:write'], $scopes));
 
         if ($missing !== []) {

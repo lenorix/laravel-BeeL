@@ -8,6 +8,7 @@ use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelManager;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\DocumentDownloadFailed;
+use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\Support\DocumentKind;
 use Lenorix\LaravelBeel\Support\SignedDownloadStorage;
 use Lenorix\LaravelBeel\Support\VerifiedDownloadStream;
@@ -124,3 +125,11 @@ it('asks the storage host again when storing, up to beel.downloads.attempts, pau
     'configured' => [2, 2],
     'never fewer than one' => [0, 1],
 ]);
+
+it('says the preview is not ready while an issued invoice\'s PDF is being generated', function () {
+    Http::fake(['*/invoices/inv-1/preview' => Http::response(null, 202, ['Retry-After' => '4'])]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->storePreview('inv-1', 'p.png', disk: 'docs'))
+        ->toThrow(fn (InvoicePdfNotReady $e) => expect($e->retryAfter)->toBe(4)->and($e->invoiceId)->toBe('inv-1'));
+    expect(Storage::disk('docs')->allFiles())->toBe([]);
+});

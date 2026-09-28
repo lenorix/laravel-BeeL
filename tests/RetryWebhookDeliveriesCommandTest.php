@@ -100,6 +100,16 @@ it('asks BeeL to retry an event whose every attempt failed', function () {
     expect(retriedDeliveryIds())->toBe(['d3']);
 });
 
+it('skips a delivery log BeeL returned without its event, and retries the rest', function () {
+    $incomplete = beelDelivery('d9', 'evt-2', 1, false, 5);
+    unset($incomplete['webhook_event_id']);
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[beelDelivery('d1', 'evt-1', 1, false, 5), $incomplete]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe(['d1']);
+});
+
 it('does not retry an event that was delivered at least once', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
         beelDelivery('d2', 'evt-1', 2, true, 5),

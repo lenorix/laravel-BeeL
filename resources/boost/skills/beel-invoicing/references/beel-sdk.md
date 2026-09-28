@@ -1,6 +1,6 @@
 # lenorix/beel-sdk
 
-Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.6.2 source on 2026-09-28. `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
+Unofficial PHP SDK for the BeeL API (made by lenorix, not endorsed by BeeL). Mapped from the installed v0.8.0 source on 2026-09-29 (generated from BeeL's contract as published on 2026-09-28). `src/Generated` is Jane code generated from BeeL's OpenAPI spec; docs.beel.es and `https://docs.beel.es/api/openapi` are the source of truth for API behaviour.
 
 In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Lenorix\LaravelBeel\BeelManager` (see `laravel-package.md`), never with `new Beel(...)`.
 
@@ -10,6 +10,7 @@ In a Laravel app, obtain `Beel`, `CompanyScope` and `AccountScope` through `Leno
 - Request bodies are Jane models built with fluent setters (`(new CreateCustomerRequest())->setName(...)`), or with the builders below. Model classes live in `Lenorix\BeelSdk\Generated\Model`.
 - `$query` arrays become query-string parameters (pagination `page`/`limit`, filters such as `external_ref`). Unknown query parameters are rejected by the API.
 - Per-call options: every resource has `withOptions(new Lenorix\BeelSdk\Http\RequestOptions(idempotencyKey: ..., headers: [...]))`, returning a copy; sub-resources inherit them (`$company->withOptions(...)->invoices`). Applied by the transport, so they work on every operation; the same key is resent on automatic retries. `Authorization`, `Host`, `Content-Type` and `Content-Length` are rejected.
+- Getters of optional fields BeeL may leave out return `null` (since 0.7/0.8): null-check them (PHPStan reports it). Optional `Pagination` and `TaxInfo` references stay non-nullable: check `isInitialized('mainTax')` first. `irpf_rate` and `default_irpf_rate` are floats.
 - Return types are concrete models (`void` for 204s). Request models also accept arrays in API format (`['invoice_ids' => [...]]`).
 - Retries (`maxRetries`, `retryDelayMs`, `maxRetryDelayMs`; per call `RequestOptions(maxRetries:, retryServerErrors:)`): 429s always; 5xx and connection errors only for idempotent methods or requests with an `Idempotency-Key` (auto-added to POSTs); never archive/export downloads. It waits what BeeL asks; a wait over `maxRetryDelayMs` throws `BeelRateLimitError` (`retryAfterSeconds`) instead. Waits block PHP.
 - Files: `createPdfArchive()`, `export()`, `invoices->previewPdf()` and `$beel->templates` return `Lenorix\BeelSdk\Http\BinaryDownload` (`body` stream, `fileName`, `contentType` without parameters, `charset` such as `utf-8` or null, `contentLength`, `counts`).
@@ -46,12 +47,15 @@ Methods: `get()`, `update(UpdateCompanyRequest)`, `delete()`, `fiscalSummary(arr
 | `update(string $invoiceId, UpdateInvoiceRequest)` | Drafts only |
 | `delete(string $invoiceId)` | Drafts only |
 | `issue(string $invoiceId, array $query = [], array $headers = [])` | Definitive number; AEAT submission and PDF are asynchronous |
-| `void(string $invoiceId, VoidInvoiceRequest, array $headers = [])` | `setReason()`, optional `setVoidDate()`; number never reused |
-| `createCorrective(string $invoiceId, CreateCorrectiveInvoiceRequest, array $headers = [])` | `setRectificationType()`, `setRectificationCode()`, `setReason()`, optional `setLines()`, `setNotes()` |
+| `void(string $invoiceId, VoidInvoiceRequest, array $headers = [])` | `setReason()`; `setIssuedInError(true)` once the invoice was sent or paid; `setVoidDate()` is deprecated and ignored; number never reused |
+| `createCorrective(string $invoiceId, CreateCorrectiveInvoiceRequest, array $headers = [])` | `setRectificationType()`, `setRectificationCode()`, `setReason()`, optional `setLines()`, `setNotes()`, `setCircumstanceDate()`, `setRecipient()` (fix recipient data), `setRecipientIsBusiness()`, `setSeriesId()`, `setExternalRef()`, `setMetadata()`, `setOptions()` |
+| `createSimplifiedExchange(CreateSimplifiedExchangeRequest, array $headers = [])` | Full invoice (recorded as F3) in exchange for simplified ones, which become `VOIDED` (`void_cause` `EXCHANGED`) |
+| `listVerifactuRecords(string $invoiceId)` | The invoice's VERI*FACTU records (`REGISTRATION`/`VOID`); a record id equals the webhook's `verifactu_registration_id` |
 | `setStatus(string $invoiceId, SetInvoiceStatusRequest, array $headers = [])` | Commercial status (e.g. PAID) |
 | `getPdf(string $invoiceId, ?int $waitSeconds = null)` | `InvoicePdfResponseData`: `getDownloadUrl()`, `getExpiresInSeconds()`, `getFileName()`; presigned URL, about 5 minutes. Throws `BeelNotReadyError` (`retryAfter`) while BeeL still renders it (202); `waitSeconds` sends `Prefer: wait=N` |
-| `preview(string $invoiceId)` | Draft PDF preview |
-| `send(string $invoiceId, ?SendEmailRequest = null, array $headers = [])` | Queued, not delivered; check the account email history |
+| `preview(string $invoiceId)` | Preview image URL (`getImageUrl()`), drafts included; throws `BeelNotReadyError` while an issued invoice's PDF is generated (202) |
+| `previewPdf(string $invoiceId)` | A draft's PDF as `BinaryDownload` |
+| `send(string $invoiceId, ?SendEmailRequest = null, array $headers = [])` | Queued, not delivered; returns the `...Response202Data` model when BeeL waits for the PDF; check the account email history |
 | `deliver(CreateInvoiceDeliveryRequest, array $headers = [])` | One email with several invoices |
 | `derive(CreateInvoiceDerivationRequest, array $headers = [])` | New draft from an existing invoice |
 | `convertToInvoice(string $invoiceId, ?ConvertProformaToInvoiceRequest = null, array $headers = [])` | Proforma to fiscal invoice |
@@ -59,13 +63,13 @@ Methods: `get()`, `update(UpdateCompanyRequest)`, `delete()`, `fiscalSummary(arr
 | `createPdfArchive(CreateInvoicePdfArchiveRequest)`, `export(CreateInvoiceExportRequest)` | ZIP of PDFs, exports |
 | `getSchedule`, `setSchedule(SetInvoiceScheduleRequest)`, `clearSchedule` | Scheduled issue (also `->schedule->get/set/clear`) |
 
-Invoice model getters include `getId()`, `getNumber()`, `getInvoiceNumber()`, `getType()`, `getStatus()`, `getExternalRef()`, `getTotals()`, `getLines()`, `getRecipient()`, `getIssueDate()`, `getOperationDate()`, `getRectificationCode()`, `getRectificationType()`, `getRectifiedInvoiceId()`, `getVoidReason()`, and `getVerifactu()` (`getEnabled()`, `getSubmissionStatus()`, `getRegistrationNumber()`, `getRegisteredAt()`, `getInvoiceHash()`, `getQrUrl()`, `getErrorCode()`, `getErrorMessage()`, `getSkipReason()`).
+Invoice model getters include `getId()`, `getNumber()`, `getInvoiceNumber()`, `getType()`, `getStatus()`, `getExternalRef()`, `getTotals()`, `getLines()`, `getRecipient()`, `getIssueDate()`, `getOperationDate()`, `getRectificationCode()`, `getRectificationType()`, `getRectifiedInvoiceId()`, `getVoidReason()`, `getVoidCause()`, `getVoidedAt()`, `getReplacedInvoiceIds()`, and `getVerifactu()` (`getEnabled()`, `getSubmissionStatus()`, `getRegistrationNumber()` (a BeeL id), `getRegisteredAt()`, `getInvoiceHash()`, `getQrUrl()`, `getErrorCode()`, `getErrorMessage()`, `getSkipReason()` (historical)). `getChainingHash()` was removed in 0.7.
 
 ### Other company resources
 
 - `customers`: `list`, `create(CreateCustomerRequest, array $headers = [])`, `get`, `update(string $id, PatchCustomerRequest)`, `delete`, `createBulk`, `deleteBulk`, `import`, `previewImport`.
 - `products`: `list`, `create(CreateProductRequest, array $headers = [])`, `get`, `update(string $id, PatchProductRequest)`, `delete`, `createBulk`, `deleteBulk`.
-- `series`: `list`, `create(CreateSeriesRequest, array $headers = [])`, `get`, `update(string $id, PatchSeriesRequest)`, `delete`, `getDefaults()`, `setDefault(string $id, array $headers = [])`, `ensureDefaults(array $headers = [])`.
+- `series`: `list`, `create(CreateSeriesRequest, array $headers = [])` (`document_type` required), `get`, `update(string $id, PatchSeriesRequest)`, `delete`, `getDefaults()`, `setDefault(string $id, array $headers = [])`, `ensureDefaults(array $headers = [])`.
 - `recurringInvoices`: `list`, `create(CreateRecurringInvoiceRequest)`, `get`, `update(string $id, PatchRecurringInvoiceRequest)`, `delete`, `setStatus(string $id, SetRecurringInvoiceStatusRequest)`, `nextOccurrence`, `history`, `stats`, `derive`, `generateNow`, `generate(string $id, array $headers = [])`, `skip`.
 - `paymentConnections` (Stripe): `list`, `authorize(InitiatePaymentConnectionRequest)`, `update`, `disconnect`, `events(string $connectionId)` with `list(['needs_action' => true])`, `get`, `retry`, `draft`, `resolve`, `discard`, `restore`.
 - `taxConfiguration`: `get()`, `update(UpdateTaxConfigurationRequest)`.
@@ -91,7 +95,7 @@ Methods: `get()`, `usage()`, `changeAccessLevel(ChangeAccessLevelRequest)`, `cre
 
 ## Errors
 
-`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `BeelApiError::context()` returns `status_code`, `api_code`, `request_id`, `retry_after` for logging (not `details`, which can echo submitted values; read `$e->details`). `Lenorix\BeelSdk\Exception\BeelNotReadyError` (HTTP 202, `retryAfter`, `requestId`, `context()`) does not extend `BeelApiError`: a generic `catch (BeelApiError)` doesn't catch it. `WebhookVerificationError` is separate, with subclasses `WebhookHeaderError` (missing/malformed header), `WebhookTimestampError` (outside tolerance), `WebhookSignatureError` (no signature matches) and `WebhookPayloadError` (body not a JSON object / schema).
+`Lenorix\BeelSdk\Exception\BeelApiError` (`statusCode`, `apiCode`, `details`, `requestId`, `retryAfter`) with subclasses `BeelAuthError` (401/403), `BeelNotFoundError` (404), `BeelConflictError` (409), `BeelValidationError` (422), `BeelRateLimitError` (429, `retryAfterSeconds`). Exceptions without an HTTP response (transport failures) are rethrown unchanged; in Laravel they are `LaravelNetworkException` / `LaravelClientException`. `BeelApiError::context()` returns `status_code`, `api_code`, `request_id`, `retry_after` for logging (not `details`, which can echo submitted values; read `$e->details`). `Lenorix\BeelSdk\Exception\BeelNotReadyError` (HTTP 202, `retryAfter`, `requestId`, `context()`) does not extend `BeelApiError`: a generic `catch (BeelApiError)` doesn't catch it. `Lenorix\BeelSdk\Exception\BeelUnexpectedResponseError` (`statusCode`, `requestId`, `context()`) is a 2xx this SDK version does not know, with a JSON body: the request may have succeeded, so check `getLastResponse()` before retrying; it does not extend `BeelApiError`. `WebhookVerificationError` is separate, with subclasses `WebhookHeaderError` (missing/malformed header), `WebhookTimestampError` (outside tolerance), `WebhookSignatureError` (no signature matches) and `WebhookPayloadError` (body not a JSON object / schema).
 
 ## Webhooks
 
