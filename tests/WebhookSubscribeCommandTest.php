@@ -4,6 +4,7 @@ use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Laravel\Prompts\Prompt;
 use Lenorix\LaravelBeel\Contracts\WebhookSecretResolver;
 use Lenorix\LaravelBeel\Support\EnvFileWriter;
 
@@ -190,6 +191,10 @@ it('prints the rotated secret once as the only way to recover when it cannot be 
 
 it('asks for confirmation in production', function () {
     app()->detectEnvironment(fn () => 'production');
+    // Outside the testing environment Laravel Prompts would render the question itself, where the
+    // test can't answer it; it only falls back to the answerable one if an earlier command in the
+    // process happened to turn that on. Turn it on here, so the test doesn't depend on the order.
+    Prompt::fallbackWhen(true);
     Http::fake();
 
     $this->artisan('beel:webhook:subscribe')->expectsConfirmation('Are you sure you want to run this command?', 'no')->assertFailed();
