@@ -39,6 +39,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
 
   `Jobs\StoreInvoicePdf` does the same from the queue: it waits for BeeL's `Retry-After` while the PDF is generated, treats an existing file as done and fails at once on errors retrying can't fix. Its payload is encrypted, since it may hold an API key.
   `StoreInvoicePreview`, `StoreInvoicePreviewPdf`, `StoreInvoicePdfArchive`, `StoreInvoiceExport` and `StoreRepresentationDocument` do the same for the other documents, on the shared `Jobs\StoreBeelDocument` base.
+  Once stored, every job dispatches `Events\BeelDocumentStored` with the `StoredDocument` (including an archive's `failed` count), disk, invoice and company, and no credentials.
 
   `$company->invoices` is now `BeelCompanyInvoices`, which proxies the SDK resource. `BeelFake::invoicePdf()` and `BeelFake::pdf()` fake it.
 - Per-type webhook events in `Events\Webhooks` (`InvoiceIssued`, `VerifactuStatusUpdated`, `InvoicePdfGenerated`, ...), dispatched right after `BeelWebhookReceived` for known types, with typed `data()`.
@@ -47,6 +48,7 @@ First release. Requires PHP 8.4+, Laravel 13, and `lenorix/beel-sdk` 0.6.1+.
 - `Jobs\Middleware\ThrottleBeelRequests` keeps queued jobs under BeeL's rate limit per API key (`beel.queue_rate_limit`, 250/min), releasing them until the window resets instead of provoking 429s. `StoreInvoicePdf` uses it and retries within a day, counting only exceptions.
 - Config values are read typed: numbers may come as env strings, but a wrong type (e.g. an array for `beel.http.timeout`) fails with an error naming the key instead of silently becoming 0.
 - `LaravelNetworkException` and `LaravelClientException` autoload like any other class.
+- Direct downloads, without storing: `$company->invoices->downloadPdf($id, ?fileName)`, `downloadPreview()`, `downloadPreviewPdf()`, `downloadPdfArchive($request, ?fileName)`, `downloadExport($request, ?fileName)` and `$company->downloadRepresentationDocument(?fileName)` return a `StreamedResponse` that streams the file to the browser in `beel.downloads.buffer_bytes` chunks. The file's signature is checked before the response exists, so failures throw `DocumentDownloadFailed` in the controller. File names default to BeeL's, get an ASCII fallback, and slashes (as in invoice numbers) become underscores.
 - Document downloads count bytes by position, so storage adapters that read a body twice (the AWS SDK computes a checksum first) no longer reject a valid download as too long.
 - The typed webhook events' `data()` checks the model it returns and throws `UnexpectedValueException` naming the event if the payload doesn't match.
 - `$company->invoices->storePdfArchive()`, `storeExport()` and `storePreviewPdf()` store the files BeeL returns in the response body (invoice PDF archive, spreadsheet export, draft PDF preview), streamed from the socket and verified like `storePdf()`, returning a `StoredDocument` with BeeL's counts. `BeelFake::api()` fakes them.

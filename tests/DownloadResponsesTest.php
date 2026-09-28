@@ -159,3 +159,102 @@ it('streams a large export to the browser with small, constant memory', function
     expect($bytes)->toBe(32 * 1024 * 1024)
         ->and(memory_get_peak_usage() - $before)->toBeLessThan(4 * 1024 * 1024);
 });
+
+it('answers 200 with the type BeeL declares, told not to sniff it', function () {
+    Http::fake(['*/invoices/exports' => Http::response("PK\x03\x04sheet", 200, ['Content-Type' => 'text/csv'])]);
+
+    $response = app(BeelManager::class)->company()->invoices->downloadExport(['invoice_ids' => ['a']]);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and($response->headers->get('Content-Type'))->toBe('text/csv')
+        ->and($response->headers->get('X-Content-Type-Options'))->toBe('nosniff');
+});
+
+it('reads a signature that arrives a byte at a time, and sends every byte once', function () {
+    $body = "PK\x03\x04".str_repeat('z', 100);
+    $offset = 0;
+    Http::fake(fn () => Create::promiseFor(new PsrResponse(200, ['Content-Type' => 'application/zip'], new PumpStream(function () use ($body, &$offset) {
+        return $offset < strlen($body) ? $body[$offset++] : false;
+    }))));
+
+    $response = app(BeelManager::class)->company()->invoices->downloadPdfArchive(['invoice_ids' => ['a']]);
+
+    expect(sent($response))->toBe($body)
+        ->and($response->headers->has('Content-Length'))->toBeFalse();
+});
+
+it('says the download is empty when BeeL sends nothing', function () {
+    Http::fake(['*/invoices/exports' => Http::response('', 200)]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->downloadExport(['invoice_ids' => ['a']]))
+        ->toThrow(DocumentDownloadFailed::class, 'empty');
+});
+
+it('keeps the extension the app chose, and adds none to what is not an image', function () {
+    $png = "\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    Http::fake([
+        '*/invoices/inv-1/preview' => BeelFake::ok(['image_url' => 'https://beel-previews.test/p.webp?sig=x', 'expires_in_seconds' => 300]),
+        'beel-previews.test/*' => Http::response($png, 200),
+        '*/invoices/exports' => Http::response("PK\x03\x04sheet", 200),
+    ]);
+    $invoices = app(BeelManager::class)->company()->invoices;
+
+    expect($invoices->downloadPreview('inv-1', fileName: 'vista.image')->headers->get('Content-Disposition'))->toContain('vista.image')->not->toContain('.png')
+        ->and($invoices->downloadExport(['invoice_ids' => ['a']], fileName: 'enero')->headers->get('Content-Disposition'))->toBe('attachment; filename=enero');
+});
+
+it('gives browsers without UTF-8 file names a safe ASCII one, and accepts slashes in names', function () {
+    BeelFake::api()->invoicePdf()->fake();
+    $invoices = app(BeelManager::class)->company()->invoices;
+
+    expect($invoices->downloadPdf('inv-1', fileName: 'Nº "42"/a.pdf')->headers->get('Content-Disposition'))->toContain('filename="N__ _42__a.pdf"')
+        ->and($invoices->downloadPdf('inv-1', fileName: 'ñ')->headers->get('Content-Disposition'))->toContain('filename=_');
+});
+
+it('asks the storage host again, pausing between attempts, when it fails for a moment', function () {
+    config()->set('beel.http.retry_delay_ms', 250);
+    Http::fake([
+        '*/invoices/inv-1/pdf' => BeelFake::ok(BeelFake::invoicePdf()),
+        'beel-pdfs.s3.*' => Http::sequence()->push('', 503)->push('', 503)->push('%PDF-1.7 third time', 200, ['Content-Type' => 'application/pdf']),
+    ]);
+
+    expect(sent(app(BeelManager::class)->company()->invoices->downloadPdf('inv-1')))->toBe('%PDF-1.7 third time');
+    Sleep::assertSequence([Sleep::for(250)->milliseconds(), Sleep::for(250)->milliseconds()]);
+});
+
+it('gives up after beel.downloads.attempts, 3 by default', function (?int $configured, int $attempts) {
+    if ($configured !== null) {
+        config()->set('beel.downloads.attempts', $configured);
+    }
+    $calls = 0;
+    Http::fake([
+        '*/invoices/inv-1/pdf' => BeelFake::ok(BeelFake::invoicePdf()),
+        'beel-pdfs.s3.*' => function () use (&$calls) {
+            $calls++;
+
+            return Http::response('', 503);
+        },
+    ]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->downloadPdf('inv-1'))->toThrow(DocumentDownloadFailed::class);
+    expect($calls)->toBe($attempts);
+})->with([
+    'default' => [null, 3],
+    'configured' => [5, 5],
+    'never fewer than one' => [0, 1],
+]);
+
+it('does not ask again when the file is not there (a 403 is retried: the signed URL may have expired)', function () {
+    $calls = 0;
+    Http::fake([
+        '*/invoices/inv-1/pdf' => BeelFake::ok(BeelFake::invoicePdf()),
+        'beel-pdfs.s3.*' => function () use (&$calls) {
+            $calls++;
+
+            return Http::response('', 404);
+        },
+    ]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->downloadPdf('inv-1'))->toThrow(DocumentDownloadFailed::class);
+    expect($calls)->toBe(1);
+});

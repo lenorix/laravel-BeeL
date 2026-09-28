@@ -97,3 +97,30 @@ it('maps every BeeL error of the representation link to BeelApiError', function 
     expect(fn () => app(BeelManager::class)->company()->storeRepresentationDocument('r.pdf', disk: 'docs'))
         ->toThrow(fn (BeelApiError $e) => expect($e->apiCode)->toBe('SOMETHING_WRONG')->and($e->getMessage())->not->toBeEmpty());
 })->with([401, 403, 404, 409, 429, 500]);
+
+it('asks the storage host again when storing, up to beel.downloads.attempts, pausing between attempts', function (?int $configured, int $attempts) {
+    if ($configured !== null) {
+        config()->set('beel.downloads.attempts', $configured);
+    }
+    config()->set('beel.http.retry_delay_ms', 250);
+    $calls = 0;
+    Http::fake([
+        '*/invoices/inv-1/preview' => BeelFake::ok(['image_url' => 'https://beel-previews.s3.test/inv-1.webp?sig=x', 'expires_in_seconds' => 300]),
+        'beel-previews.s3.test/*' => function () use (&$calls) {
+            $calls++;
+
+            return Http::response('', 503);
+        },
+    ]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->storePreview('inv-1', 'p.webp', disk: 'docs'))->toThrow(DocumentDownloadFailed::class);
+    expect($calls)->toBe($attempts);
+    Sleep::assertSleptTimes($attempts - 1);
+    if ($attempts > 1) {
+        Sleep::assertSlept(fn ($duration) => (int) $duration->totalMilliseconds === 250, $attempts - 1);
+    }
+})->with([
+    'default' => [null, 3],
+    'configured' => [2, 2],
+    'never fewer than one' => [0, 1],
+]);

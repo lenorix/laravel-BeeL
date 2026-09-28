@@ -40,6 +40,9 @@ final class DocumentResponse
             throw new DocumentDownloadFailed($document, $head === '' ? 'the download is empty.' : "the download is not {$kind->label()}.", 1);
         }
 
+        // A slash in a name (say an invoice number like A/42) is not allowed in Content-Disposition.
+        $fileName = strtr($fileName, ['/' => '_', '\\' => '_']);
+
         // An image's format is only known now: give a name without extension the right one.
         if ($kind === DocumentKind::Image && pathinfo($fileName, PATHINFO_EXTENSION) === '') {
             $fileName .= '.'.substr($kind->contentTypeOf($head), strlen('image/'));
@@ -71,7 +74,7 @@ final class DocumentResponse
 
     private static function asciiFallback(string $fileName): string
     {
-        $ascii = preg_replace('/[^\x20-\x7E]|["\\\\%\/]/', '_', $fileName);
+        $ascii = preg_replace('/[^\x20-\x7E]|["%]/', '_', $fileName);
 
         return is_string($ascii) && $ascii !== '' ? $ascii : 'download';
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lenorix\LaravelBeel\Jobs;
 
 use Lenorix\LaravelBeel\BeelCompany;
+use Lenorix\LaravelBeel\StoredDocument;
 
 /**
  * Stores a draft's PDF preview on a Laravel disk from the queue. See StoreBeelDocument for how it waits, retries
@@ -30,8 +31,13 @@ final class StoreInvoicePreviewPdf extends StoreBeelDocument
         parent::__construct($path, $disk, $overwrite, $options, $companyId, $apiKey);
     }
 
-    protected function store(BeelCompany $company): void
+    protected function store(BeelCompany $company): StoredDocument
     {
-        $company->invoices->storePreviewPdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
+        return $company->invoices->storePreviewPdf($this->invoiceId, $this->path, $this->disk, $this->overwrite, $this->options);
+    }
+
+    protected function invoiceId(): string
+    {
+        return $this->invoiceId;
     }
 }

@@ -14,9 +14,11 @@ use Lenorix\BeelSdk\Exception\BeelRateLimitError;
 use Lenorix\BeelSdk\Http\RequestOptions;
 use Lenorix\LaravelBeel\BeelCompany;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\Events\BeelDocumentStored;
 use Lenorix\LaravelBeel\Exceptions\DocumentAlreadyExists;
 use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
+use Lenorix\LaravelBeel\StoredDocument;
 
 /**
  * Stores a BeeL document on a Laravel disk from the queue, with the matching store method
@@ -29,6 +31,7 @@ use Lenorix\LaravelBeel\Jobs\Middleware\ThrottleBeelRequests;
  * - A failed download is retried with backoff (up to 5 exceptions, within a day); an error that
  *   retrying can't fix (a draft has no PDF, an unknown invoice, a missing representation) fails it
  *   at once. Retrying an archive or an export makes BeeL build it again.
+ * - Once stored, it dispatches Events\BeelDocumentStored (with an archive's or export's counts).
  * - It stays under BeeL's rate limit (ThrottleBeelRequests) instead of provoking 429s when many are
  *   dispatched at once.
  *
@@ -51,15 +54,21 @@ abstract class StoreBeelDocument implements ShouldBeEncrypted, ShouldQueue
      */
     public function __construct(
         public readonly string $path,
-        public readonly ?string $disk = null,
-        public readonly bool $overwrite = false,
-        public readonly array $options = [],
-        public readonly ?string $companyId = null,
-        #[\SensitiveParameter] public readonly ?string $apiKey = null,
+        public readonly ?string $disk,
+        public readonly bool $overwrite,
+        public readonly array $options,
+        public readonly ?string $companyId,
+        #[\SensitiveParameter] public readonly ?string $apiKey,
     ) {}
 
     /** Stores the document on $this->disk at $this->path through $company. */
-    abstract protected function store(BeelCompany $company): void;
+    abstract protected function store(BeelCompany $company): StoredDocument;
+
+    /** The invoice the document belongs to, for BeelDocumentStored; null when not about one invoice. */
+    protected function invoiceId(): ?string
+    {
+        return null;
+    }
 
     public function retryUntil(): \DateTimeInterface
     {
@@ -82,7 +91,9 @@ abstract class StoreBeelDocument implements ShouldBeEncrypted, ShouldQueue
     {
         try {
             // No in-process retries: waiting out a 429 would block the worker; the queue waits instead.
-            $this->store($manager->company(apiKey: $this->apiKey, companyId: $this->companyId)->withOptions(new RequestOptions(maxRetries: 0)));
+            $stored = $this->store($manager->company(apiKey: $this->apiKey, companyId: $this->companyId)->withOptions(new RequestOptions(maxRetries: 0)));
+
+            event(new BeelDocumentStored(static::class, $stored, $this->disk, $this->invoiceId(), $this->companyId));
         } catch (InvoicePdfNotReady $exception) {
             $this->release($exception->retryAfter ?? 5);
         } catch (BeelRateLimitError $exception) {
@@ -103,6 +114,6 @@ abstract class StoreBeelDocument implements ShouldBeEncrypted, ShouldQueue
     private static function isPermanent(BeelApiError $exception): bool
     {
         return $exception->statusCode >= 400 && $exception->statusCode < 500
-            && ! in_array($exception->statusCode, [408, 429], true);
+            && $exception->statusCode !== 408;
     }
 }
