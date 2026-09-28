@@ -128,16 +128,15 @@ final class BeelWebhookController
      */
     private static function claim(string $eventId, string $secret, int $tolerance): WebhookClaim|false|null
     {
-        $seconds = config('beel.webhook_dedupe_seconds', 900);
-        if (! is_numeric($seconds) || (int) $seconds <= 0) {
+        $seconds = Settings::optionalInt('beel.webhook_dedupe_seconds', 900);
+        if ($seconds === null || $seconds <= 0) {
             return null;
         }
 
-        $store = config('beel.webhook_dedupe_store');
-        $cache = Cache::store(is_string($store) && $store !== '' ? $store : null);
+        $cache = Cache::store(self::dedupeStore());
         $key = 'beel:webhook:'.hash_hmac('sha256', $eventId, $secret);
 
-        return $cache->add($key, true, max((int) $seconds, 2 * $tolerance)) ? new WebhookClaim($cache, $key) : false;
+        return $cache->add($key, true, max($seconds, 2 * $tolerance)) ? new WebhookClaim($cache, $key) : false;
     }
 
     /**
@@ -147,9 +146,8 @@ final class BeelWebhookController
      */
     private static function warn(string $reason, string $message, Request $request): void
     {
-        $store = config('beel.webhook_dedupe_store');
         $firstThisMinute = rescue(
-            fn () => Cache::store(is_string($store) && $store !== '' ? $store : null)->add("beel:webhook:warned:{$reason}", true, 60),
+            fn () => Cache::store(self::dedupeStore())->add("beel:webhook:warned:{$reason}", true, 60),
             true,
             false,
         );
@@ -166,6 +164,14 @@ final class BeelWebhookController
             'webhook_key' => is_string($webhookKey) ? mb_substr($webhookKey, 0, 64) : null,
             'unverified_delivery_id' => is_string($deliveryId) ? mb_substr($deliveryId, 0, 64) : null,
         ]);
+    }
+
+    /** The cache store for deduplication and warning throttling; null is the default store. */
+    private static function dedupeStore(): ?string
+    {
+        $store = Settings::string('beel.webhook_dedupe_store', '');
+
+        return $store !== '' ? $store : null;
     }
 
     private static function received(): JsonResponse

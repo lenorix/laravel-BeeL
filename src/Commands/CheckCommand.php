@@ -228,15 +228,15 @@ final class CheckCommand extends Command
 
     private function checkDedupeStore(): void
     {
-        $seconds = config('beel.webhook_dedupe_seconds', 900);
-        if (! is_numeric($seconds) || (int) $seconds <= 0) {
+        $seconds = Settings::optionalInt('beel.webhook_dedupe_seconds', 900);
+        if ($seconds === null || $seconds <= 0) {
             $this->note('Webhook deduplication is disabled (beel.webhook_dedupe_seconds).');
 
             return;
         }
 
-        $name = config('beel.webhook_dedupe_store');
-        $name = is_string($name) && $name !== '' ? $name : null;
+        $name = Settings::string('beel.webhook_dedupe_store', '');
+        $name = $name !== '' ? $name : null;
         $label = $name ?? Settings::string('cache.default', 'default');
 
         try {

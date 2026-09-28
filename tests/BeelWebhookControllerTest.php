@@ -463,8 +463,16 @@ it('deduplicates for any positive number of seconds, and not for a nonsense valu
     'one second' => [1, 1],
     'a numeric string' => ['0.5', 2],
     'zero' => [0, 2],
-    'not a number' => ['soon', 2],
 ]);
+
+it('fails loudly on a deduplication setting that is not a number, instead of silently turning it off', function () {
+    config()->set('beel.webhook_dedupe_seconds', 'soon');
+    $this->withoutExceptionHandling();
+    $payload = ['id' => 'evt_1', 'type' => 'invoice.issued', 'data' => ['id' => 'inv_123']];
+
+    expect(fn () => $this->postJson('/beel/webhook', $payload, ['BeeL-Signature' => signBeelPayload($payload, 'test-webhook-secret')]))
+        ->toThrow(InvalidArgumentException::class, 'beel.webhook_dedupe_seconds');
+});
 
 it('remembers events in the configured store, under a key only the secret can derive, for exactly twice the tolerance', function () {
     config()->set('cache.stores.webhooks', ['driver' => 'array']);

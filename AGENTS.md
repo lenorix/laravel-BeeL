@@ -14,6 +14,7 @@ Run all three before every commit. The `quality` workflow also enforces line cov
 
 ## Hard rules
 
+- **Before a release**, re-check the date-sensitive facts in `references/spain-invoicing-scope.md` and `references/verifactu.md` (items marked "verify", deadlines, the pending B2B Ministerial Order) against their sources, and update their "Checked on" date.
 - **Before a release**, run `tools/sandbox-check.php` by hand with a sandbox key: read-only, refuses live keys, and reports whether the SDK parses BeeL's real responses and where `BeelFake` has drifted from them.
 - **Tests never reach a real service.** `Http::preventStrayRequests()` is on in `tests/TestCase.php`. Fake BeeL with `Http::fake()` and `Testing\BeelFake`. A one-off probe against a local server (for example a benchmark) goes in a temporary file that is deleted afterwards, never in the suite.
 - **Secrets never leak:**
@@ -60,7 +61,7 @@ A public API change is not done until each of these is updated:
 - Get clients only through `BeelManager`. Credentials come from `Contracts\CredentialsResolver`, resolved on every call.
 - `BeelCompany`, `BeelAccount` and `BeelCompanyInvoices` decorate SDK scopes and resources. They must keep wrapping whatever `withOptions()` returns.
 - Internal helpers go in `src/Support` and are marked `@internal`. One class per file (`ArchTest`).
-- Read config through `Support\Settings` (typed, fails naming the key), never `(int) config(...)`. Type-check `mixed` SDK responses instead of calling methods on them.
+- Read config through `Support\Settings` (typed, fails naming the key), never `(int) config(...)`. A fallback in code must equal the default in `config/beel.php` (`ConfigDefaultsTest`). Type-check `mixed` SDK responses instead of calling methods on them.
 - Use `Illuminate\Support\Sleep` for the package's own delays, so tests can `Sleep::fake()`. BeeL API retries and their waits are the SDK's: never add retries in the transport.
 
 ## Git
