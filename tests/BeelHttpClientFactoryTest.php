@@ -120,3 +120,15 @@ it('applies the configured timeout and connect timeout options', function () {
 
     Http::assertSent(fn (ClientRequest $r) => $r->url() === 'https://example.test/ping');
 });
+
+it('never follows a redirect, which the SDK reads as an error, even if the app\'s options allow them', function () {
+    config()->set('beel.http.retries', 0);
+    config()->set('beel.http.options', ['allow_redirects' => true]);
+    Http::fake([
+        '*/invoices/inv-1' => Http::response('', 302, ['Location' => 'https://elsewhere.test/x']),
+        'elsewhere.test/*' => Http::response(['success' => true, 'data' => BeelFake::invoice()], 200),
+    ]);
+
+    expect(fn () => app(BeelManager::class)->company()->invoices->get('inv-1'))->toThrow(BeelApiError::class);
+    Http::assertNotSent(fn (ClientRequest $r) => str_contains($r->url(), 'elsewhere.test'));
+});

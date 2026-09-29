@@ -25,7 +25,10 @@ final class BeelHttpClientFactory
     {
         $request = $this->http->timeout(Settings::float('beel.http.timeout', 30))
             ->connectTimeout(Settings::float('beel.http.connect_timeout', 10))
-            ->withOptions((array) $this->config->get('beel.http.options', []));
+            ->withOptions((array) $this->config->get('beel.http.options', []))
+            // After the app's options, so none can turn it back on: the SDK reads a 3xx as an error,
+            // and following one would send the API key elsewhere or make a write look done.
+            ->withoutRedirecting();
 
         return new LaravelPsr18Client($request);
     }

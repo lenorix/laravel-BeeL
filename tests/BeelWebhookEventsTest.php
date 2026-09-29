@@ -71,7 +71,7 @@ it('does not dispatch the typed event again for a redelivery', function () {
 });
 
 it('says so when an event\'s data is not the model its type promises', function () {
-    $received = new BeelWebhookReceived('evt-9', 'invoice.issued', [], ['id' => 'evt-9', 'type' => 'invoice.issued', 'created_at' => '2025-01-20T10:30:00Z', 'api_version' => '2025-01', 'livemode' => false, 'data' => ['invoice_id' => 'i']]);
+    $received = new BeelWebhookReceived('evt-9', 'invoice.issued', [], ['id' => 'evt-9', 'type' => 'invoice.issued', 'created_at' => '2025-01-20T10:30:00Z', 'api_version' => '2025-01', 'livemode' => false, 'data' => BeelFake::webhookData('invoice.issued')]);
     $event = new VerifactuStatusUpdated($received);
 
     expect(fn () => $event->data())->toThrow(UnexpectedValueException::class, 'evt-9 (invoice.issued)');

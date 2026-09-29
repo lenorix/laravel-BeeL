@@ -7,9 +7,7 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
 use Illuminate\Foundation\Http\Middleware\TrimStrings;
 use Illuminate\Http\Request;
-use Lenorix\BeelSdk\Exception\BeelApiError;
-use Lenorix\BeelSdk\Exception\BeelNotReadyError;
-use Lenorix\BeelSdk\Exception\BeelUnexpectedResponseError;
+use Lenorix\BeelSdk\Exception\BeelException;
 use Lenorix\LaravelBeel\Commands\CheckCommand;
 use Lenorix\LaravelBeel\Commands\RetryWebhookDeliveriesCommand;
 use Lenorix\LaravelBeel\Commands\WebhookSubscribeCommand;
@@ -80,22 +78,16 @@ class LaravelBeelServiceProvider extends PackageServiceProvider
     /** @return array<string, mixed> */
     private static function beelErrorContext(\Throwable $exception): array
     {
-        if (self::isBeelError($exception)) {
+        if ($exception instanceof BeelException) {
             return []; // Laravel adds its context() itself.
         }
 
         for ($current = $exception->getPrevious(); $current !== null; $current = $current->getPrevious()) {
-            if (self::isBeelError($current)) {
+            if ($current instanceof BeelException) {
                 return $current->context();
             }
         }
 
         return [];
-    }
-
-    /** @phpstan-assert-if-true BeelApiError|BeelNotReadyError|BeelUnexpectedResponseError $exception */
-    private static function isBeelError(\Throwable $exception): bool
-    {
-        return $exception instanceof BeelApiError || $exception instanceof BeelNotReadyError || $exception instanceof BeelUnexpectedResponseError;
     }
 }
