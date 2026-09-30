@@ -8,18 +8,22 @@ declare(strict_types=1);
  *
  *     BEEL_SANDBOX_KEY=beel_sk_test_... BEEL_SANDBOX_COMPANY_ID=<uuid> php tools/sandbox-check.php
  *
- * It only reads (GET requests, plus downloading one invoice PDF to a temporary directory), refuses
- * live keys, and reports:
+ * It changes nothing: GET requests, plus document downloads into a temporary directory it deletes
+ * (the invoice archive and export are POSTs that only build a file). It refuses live keys, and
+ * reports:
  * - whether the SDK parses BeeL's real responses through the package;
  * - fields BeeL returns that BeelFake doesn't fake, and fields BeelFake fakes that BeeL no longer
  *   returns (the fakes drifting from the API);
- * - whether storePdf() stores a real PDF.
+ * - whether every store*() method stores a real file of its kind, and every download*() method
+ *   streams one.
  */
 
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
+use Lenorix\BeelSdk\Exception\BeelApiError;
 use Lenorix\LaravelBeel\BeelManager;
+use Lenorix\LaravelBeel\Exceptions\InvoicePdfNotReady;
 use Lenorix\LaravelBeel\LaravelBeelServiceProvider;
 use Lenorix\LaravelBeel\Testing\BeelFake;
 use Orchestra\Testbench\Foundation\Application;
@@ -98,19 +102,70 @@ if ($companyId === null) {
     $rawCustomer = $bodies["/api/v1/companies/{$companyId}/customers"]['data']['customers'][0] ?? null;
     is_array($rawCustomer) ? $compare('customer', $rawCustomer, BeelFake::customer()) : $report('SKIP', 'customer fields: the company has no customers');
 
-    $issued = collect($invoices ?? [])->first(fn ($invoice) => $invoice->getStatus() !== 'DRAFT');
-    if ($issued === null) {
-        $report('SKIP', 'storePdf(): no issued invoice among the first five');
-    } else {
-        $step("storePdf() of invoice {$issued->getId()}", function () use ($company, $issued) {
-            $path = $company->invoices->storePdf($issued->getId(), 'check.pdf', disk: 'sandbox-check', overwrite: true);
-            $disk = Storage::disk('sandbox-check');
-            $ok = str_starts_with((string) $disk->get($path), '%PDF-') && $disk->size($path) > 0;
-            $disk->deleteDirectory('');
+    $disk = Storage::disk('sandbox-check');
+    $pdf = '/^%PDF-/';
+    $image = '/^(\x89PNG|RIFF....WEBP|\xFF\xD8\xFF)/s';
+    $zip = '/^PK\x03\x04/';
 
-            return $ok ?: throw new UnexpectedValueException('the stored file is not a PDF');
-        });
+    /**
+     * Checks one document method: `store` runs a store*() and reads the file back, `stream` sends a
+     * download*() response into memory. With $mayBeUnavailable, a document BeeL can't serve yet (202,
+     * or a 4xx such as a representation not generated) is a SKIP instead of a failure.
+     */
+    $document = function (string $what, string $signature, string $mode, callable $call, bool $mayBeUnavailable = false) use ($report, $disk): void {
+        try {
+            if ($mode === 'store') {
+                $result = $call();
+                $body = (string) $disk->get(is_string($result) ? $result : $result->path);
+            } else {
+                ob_start();
+                try {
+                    $call()->sendContent();
+                } finally {
+                    $body = (string) ob_get_clean();
+                }
+            }
+            preg_match($signature, $body) === 1
+                ? $report('OK', "{$what}: ".strlen($body).' bytes')
+                : $report('FAIL', "{$what}: not the expected kind of file");
+        } catch (InvoicePdfNotReady $e) {
+            $report($mayBeUnavailable ? 'SKIP' : 'FAIL', "{$what}: BeeL is still generating it");
+        } catch (BeelApiError $e) {
+            $report($mayBeUnavailable && $e->statusCode < 500 ? 'SKIP' : 'FAIL', "{$what}: BeeL answered {$e->statusCode} {$e->apiCode}");
+        } catch (Throwable $e) {
+            $report('FAIL', "{$what}: ".$e::class.': '.$e->getMessage());
+        } finally {
+            $disk->deleteDirectory('');
+        }
+    };
+
+    $issued = collect($invoices ?? [])->filter(fn ($invoice) => $invoice->getStatus() !== 'DRAFT')->values();
+    $draft = collect($invoices ?? [])->first(fn ($invoice) => $invoice->getStatus() === 'DRAFT');
+    if ($issued->isEmpty()) {
+        $report('SKIP', 'issued-invoice documents: no issued invoice among the first five');
+    } else {
+        $id = $issued->first()->getId();
+        $request = ['invoice_ids' => $issued->take(2)->map(fn ($invoice) => $invoice->getId())->all()];
+        $document("storePdf() of invoice {$id}", $pdf, 'store', fn () => $company->invoices->storePdf($id, 'check.pdf', disk: 'sandbox-check', overwrite: true));
+        $document("downloadPdf() of invoice {$id}", $pdf, 'stream', fn () => $company->invoices->downloadPdf($id));
+        $document("storePreview() of invoice {$id}", $image, 'store', fn () => $company->invoices->storePreview($id, 'check.img', disk: 'sandbox-check', overwrite: true), true);
+        $document("downloadPreview() of invoice {$id}", $image, 'stream', fn () => $company->invoices->downloadPreview($id), true);
+        $document('storePdfArchive()', $zip, 'store', fn () => $company->invoices->storePdfArchive($request, 'check.zip', disk: 'sandbox-check', overwrite: true));
+        $document('downloadPdfArchive()', $zip, 'stream', fn () => $company->invoices->downloadPdfArchive($request));
+        $document('storeExport()', $zip, 'store', fn () => $company->invoices->storeExport($request, 'check.xlsx', disk: 'sandbox-check', overwrite: true));
+        $document('downloadExport()', $zip, 'stream', fn () => $company->invoices->downloadExport($request));
+        $step("listVerifactuRecords() of invoice {$id} parses", fn () => $company->invoices->listVerifactuRecords($id));
     }
+
+    if ($draft === null) {
+        $report('SKIP', 'draft documents: no draft among the first five');
+    } else {
+        $document("storePreviewPdf() of draft {$draft->getId()}", $pdf, 'store', fn () => $company->invoices->storePreviewPdf($draft->getId(), 'draft.pdf', disk: 'sandbox-check', overwrite: true));
+        $document("downloadPreviewPdf() of draft {$draft->getId()}", $pdf, 'stream', fn () => $company->invoices->downloadPreviewPdf($draft->getId()));
+    }
+
+    $document('storeRepresentationDocument()', $pdf, 'store', fn () => $company->storeRepresentationDocument('representation.pdf', disk: 'sandbox-check', overwrite: true), true);
+    $document('downloadRepresentationDocument()', $pdf, 'stream', fn () => $company->downloadRepresentationDocument(), true);
 }
 
 echo PHP_EOL.($failures === 0 ? 'No failures.' : "{$failures} failure(s).").PHP_EOL;
