@@ -16,8 +16,8 @@ beforeEach(function () {
     config()->set('services.beel.key', 'beel_sk_test_key');
     config()->set('services.beel.account_id', 'acc-1');
     config()->set('services.beel.base_url', 'https://beel.test/api');
-    config()->set('beel.webhook_delivery_retry.max_age_minutes', 1440);
-    config()->set('beel.webhook_delivery_retry.max_attempts', 8);
+    config()->set('beel.webhook_delivery_retry.max_age_minutes', 5760);
+    config()->set('beel.webhook_delivery_retry.max_attempts', 10);
     config()->set('beel.http.retries', 0); // count each retry request exactly once, without real sleeps
 });
 
@@ -90,14 +90,14 @@ function retriedDeliveryIds(): array
 
 it('asks BeeL to retry an event whose every attempt failed', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
-        beelDelivery('d3', 'evt-1', 3, false, 5),
-        beelDelivery('d2', 'evt-1', 2, false, 6),
-        beelDelivery('d1', 'evt-1', 1, false, 7),
+        beelDelivery('d7', 'evt-1', 7, false, 5),
+        beelDelivery('d2', 'evt-1', 2, false, 4030),
+        beelDelivery('d1', 'evt-1', 1, false, 4031),
     ]]]);
 
     $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
 
-    expect(retriedDeliveryIds())->toBe(['d3']);
+    expect(retriedDeliveryIds())->toBe(['d7']);
 });
 
 it('skips a delivery log BeeL returned without its event, and retries the rest', function () {
@@ -137,11 +137,11 @@ it('ignores events older than the configured max age, measured from their first 
 
 it('gives up on events that reached the max attempts and fails so monitoring notices', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
-        beelDelivery('d3', 'evt-1', 3, false, 5),
+        beelDelivery('d7', 'evt-1', 7, false, 5),
         beelDelivery('d9', 'evt-2', 1, false, 5),
     ]]]);
 
-    $this->artisan('beel:retry-webhook-deliveries', ['--max-attempts' => 3])
+    $this->artisan('beel:retry-webhook-deliveries', ['--max-attempts' => 7])
         ->expectsOutputToContain('evt-1')
         ->assertFailed();
 
@@ -154,24 +154,24 @@ it('logs and dispatches an event for an abandoned delivery so the app can recove
 
     $payload = ['id' => 'evt-1', 'type' => 'invoice.voided', 'company_id' => 'company-uuid', 'data' => ['invoice_id' => 'inv-1']];
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
-        array_merge(beelDelivery('d3', 'evt-1', 3, false, 5), ['event_type' => 'invoice.voided', 'error_message' => 'HTTP 500', 'payload' => json_encode($payload)]),
-        array_merge(beelDelivery('d1', 'evt-1', 1, false, 50), ['event_type' => 'invoice.voided']),
+        array_merge(beelDelivery('d7', 'evt-1', 7, false, 5), ['event_type' => 'invoice.voided', 'error_message' => 'HTTP 500', 'payload' => json_encode($payload)]),
+        array_merge(beelDelivery('d1', 'evt-1', 1, false, 4031), ['event_type' => 'invoice.voided']),
     ]]]);
 
-    $this->artisan('beel:retry-webhook-deliveries', ['--max-attempts' => 3])->assertFailed();
+    $this->artisan('beel:retry-webhook-deliveries', ['--max-attempts' => 7])->assertFailed();
 
     Event::assertDispatched(BeelWebhookDeliveryAbandoned::class, fn (BeelWebhookDeliveryAbandoned $event) => $event->accountId === 'acc-1'
         && $event->subscriptionId === 'wh-1'
         && $event->eventId === 'evt-1'
         && $event->eventType === 'invoice.voided'
-        && $event->attempts === 3
-        && $event->lastDeliveryId === 'd3'
+        && $event->attempts === 7
+        && $event->lastDeliveryId === 'd7'
         && $event->lastHttpStatus === 503
         && $event->lastError === 'HTTP 500'
         && $event->payload === $payload);
 
     Log::shouldHaveReceived('warning')->withArgs(fn (string $message, array $context) => str_contains($message, 'evt-1')
-        && $context['attempts'] === 3);
+        && $context['attempts'] === 7);
 });
 
 it('does not dispatch the abandoned event while an event is still being retried', function () {
@@ -186,16 +186,33 @@ it('does not dispatch the abandoned event while an event is still being retried'
     Event::assertNotDispatched(BeelWebhookDeliveryAbandoned::class);
 });
 
-it('leaves events alone while BeeL may still be retrying them automatically', function () {
+it('leaves events alone while BeeL still has an automatic attempt due on its schedule', function () {
     fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
+        // Next attempts: 1 minute after the 1st, an hour after the 3rd, 6 hours after the 4th, 36 after the 6th.
         array_merge(beelDelivery('just-now', 'evt-burst', 1, false, 0), ['delivered_at' => now()->subSeconds(30)->format(DATE_ATOM)]),
-        beelDelivery('settled', 'evt-settled', 5, false, 5),
+        beelDelivery('third', 'evt-third', 3, false, 5),
+        beelDelivery('fourth', 'evt-fourth', 4, false, 300),
+        beelDelivery('sixth', 'evt-sixth', 6, false, 2000),
+        // BeeL is done with these: all 7 used, a 4xx it never retries, a next attempt long overdue.
+        beelDelivery('seventh', 'evt-done', 7, false, 5),
+        array_merge(beelDelivery('rejected', 'evt-404', 2, false, 5), ['http_status' => 404]),
+        beelDelivery('overdue', 'evt-overdue', 3, false, 70),
     ]]]);
 
     $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
 
-    expect(retriedDeliveryIds())->toBe(['settled']);
+    expect(retriedDeliveryIds())->toEqualCanonicalizing(['seventh', 'rejected', 'overdue']);
 });
+
+it('waits for 408 and 429, which BeeL retries like a 5xx, and for connection errors', function (?int $status) {
+    fakeBeelWebhookApi([beelSubscription('wh-1')], ['wh-1' => [[
+        array_merge(beelDelivery('d3', 'evt-1', 3, false, 5), ['http_status' => $status]),
+    ]]]);
+
+    $this->artisan('beel:retry-webhook-deliveries')->assertSuccessful();
+
+    expect(retriedDeliveryIds())->toBe([]);
+})->with(['408' => [408], '429' => [429], 'connection error' => [null]]);
 
 it('uses the account and key given as options instead of services.beel', function () {
     config()->set('services.beel.account_id', 'other-account');

@@ -191,7 +191,7 @@ Per company, via OAuth authorisation. Payments generate invoices automatically u
 - Subscriptions: `$account->webhooks->create(...)`; `account_relationship` `own` (default), `managed` or `all`. HTTPS only, max 10 subscriptions, last 50 delivery logs kept. The secret is shown once; rotating it invalidates the old one immediately (update the app's `BEEL_WEBHOOK_SECRET` at the same time). `test()` sends a signed synthetic event that is not retried.
 - Envelope: `id`, `type`, `created_at`, `api_version`, `livemode` (deprecated), `test` (true only for dashboard test deliveries), `company_id` (route on this), `nif`, `account_id`, `account_external_ref`, `account_relationship` (`own`/`managed`), `data`. Null fields are omitted.
 - Headers: `BeeL-Signature` (`t=<unix>,v1=<hex>`, HMAC-SHA256 of `t + "." + raw body`, 300 s window), `BeeL-Event`, `BeeL-Event-Id` (same on every retry, equals `id`), `BeeL-Delivery-Id`, `Idempotency-Key` (equals the event id).
-- Delivery: answer 2xx within 10 s. 5 attempts with backoff 5 s, 10 s, 20 s, 40 s on 5xx, timeouts and connection errors. 4xx is not retried. Manual retry via `$account->webhooks->retryDelivery()` or the dashboard.
+- Delivery: answer 2xx within 10 s. 7 attempts on a fixed schedule (right away, then 1 min, 10 min, 1 h, 6 h, 24 h and 36 h after the previous one: the last about 67 h after the first; only the first 3, over 11 minutes, in sandbox) on 5xx, 408, 429, timeouts and connection errors. Other 4xx are not retried. Manual retry via `$account->webhooks->retryDelivery()` or the dashboard.
 - Event `data`:
   - `invoice.issued`: `invoice_id`, `invoice_number`, `customer_email`, `customer_name`.
   - `invoice.email.sent`: `all_recipients`, `sent_at`.

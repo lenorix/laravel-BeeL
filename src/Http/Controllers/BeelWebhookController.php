@@ -45,7 +45,8 @@ final class BeelWebhookController
             // The header already looks like BeeL's (checked above), so a mismatch here is most
             // likely a secret that was just rotated: BeeL invalidates the old one immediately, and
             // a non-retried 401 would drop every delivery for the rest of the deploy. Answer with a
-            // retryable 503 instead, so BeeL's redelivery (5 attempts, up to ~75s) covers the gap.
+            // retryable 503 instead, so BeeL's redelivery (7 attempts over about 67 hours; 3 over
+            // 11 minutes in sandbox) covers the gap.
             // A malformed body isn't fixed by retrying, so it keeps the non-retryable 401.
             if ($exception instanceof WebhookSignatureError) {
                 self::warn('signature_mismatch', 'BeeL webhook signature does not match the configured secret (was it just rotated?); BeeL will retry the delivery.', $request);

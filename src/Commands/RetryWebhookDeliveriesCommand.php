@@ -23,11 +23,13 @@ use Lenorix\LaravelBeel\Events\BeelWebhookSubscriptionInactive;
 use Lenorix\LaravelBeel\Support\Settings;
 
 /**
- * Safety net for webhook deliveries that never reached the app: BeeL retries a failed delivery only
- * 5 times over ~75 s, and never after a 4xx. For every event with no successful attempt, first
- * attempted within max_age_minutes and whose latest attempt is at least 2 minutes old, it asks BeeL
- * to redeliver it (idempotently, keyed on the delivery attempt), so it goes through the normal
- * verified endpoint.
+ * Safety net for webhook deliveries that never reached the app. BeeL retries a failed delivery on a
+ * fixed schedule, 7 attempts over about 67 hours (3 over 11 minutes in sandbox), and never after a
+ * 4xx other than 408 or 429. For every event with no successful attempt, first attempted within
+ * max_age_minutes, that BeeL will not retry on its own (it used its attempts, got a final 4xx, or
+ * its next attempt is overdue), it asks BeeL to redeliver it (idempotently, keyed on the delivery
+ * attempt), so it goes through the normal verified endpoint. In sandbox, where BeeL stops after 3
+ * attempts, that happens once the 4th would have been due, about an hour later.
  *
  * Events reaching max_attempts dispatch BeelWebhookDeliveryAbandoned; subscriptions BeeL
  * deactivated dispatch BeelWebhookSubscriptionInactive. Both repeat on every run while the
@@ -50,9 +52,14 @@ final class RetryWebhookDeliveriesCommand extends Command
     private const PAGE_SIZE = 100;
 
     /**
-     * BeeL's own retries of a delivery (5 attempts, backing off 5/10/20/40 s) finish about 75 s after
-     * the first one. Leave an event alone while its latest attempt is this recent, so a run never
-     * races BeeL's automatic retries, a dashboard retry, or an overlapping run.
+     * Seconds BeeL waits after automatic attempt N (index N - 1) before the next one; there is none
+     * after the 7th. https://docs.beel.es/webhooks/retries#retry-schedule (checked 2026-09-30).
+     */
+    private const AUTOMATIC_RETRY_WAITS = [60, 600, 3_600, 21_600, 86_400, 129_600];
+
+    /**
+     * Leave an event alone this long after its latest attempt, and after BeeL's next automatic attempt
+     * was due, so a run never races BeeL's retries, a dashboard retry, or an overlapping run.
      */
     private const GRACE_SECONDS = 120;
 
@@ -60,8 +67,8 @@ final class RetryWebhookDeliveriesCommand extends Command
 
     public function handle(BeelManager $manager, Container $container): int
     {
-        $maxAge = (int) ($this->stringOption('max-age') ?? Settings::int('beel.webhook_delivery_retry.max_age_minutes', 1440));
-        $maxAttempts = (int) ($this->stringOption('max-attempts') ?? Settings::int('beel.webhook_delivery_retry.max_attempts', 8));
+        $maxAge = (int) ($this->stringOption('max-age') ?? Settings::int('beel.webhook_delivery_retry.max_age_minutes', 5760));
+        $maxAttempts = (int) ($this->stringOption('max-attempts') ?? Settings::int('beel.webhook_delivery_retry.max_attempts', 10));
         $cutoff = Carbon::now()->subMinutes($maxAge);
 
         $apiKey = $this->stringOption('api-key');
@@ -130,7 +137,8 @@ final class RetryWebhookDeliveriesCommand extends Command
 
         /** @var WebhookDeliveryLog $latest */
         $latest = $attempts->sortByDesc(fn (WebhookDeliveryLog $log) => $log->getAttemptNumber())->first();
-        if (($latest->getDeliveredAt()?->getTimestamp() ?? 0) > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()) {
+        if (($latest->getDeliveredAt()?->getTimestamp() ?? 0) > Carbon::now()->subSeconds(self::GRACE_SECONDS)->getTimestamp()
+            || self::beelWillRetry($latest)) {
             return;
         }
         $label = "event {$eventId} ({$latest->getEventType()}) on webhook {$webhookId} of account {$account->accountId}";
@@ -284,6 +292,21 @@ final class RetryWebhookDeliveriesCommand extends Command
         } catch (\Throwable $exception) {
             report($exception);
         }
+    }
+
+    /**
+     * Whether BeeL still has an automatic attempt due for this failed delivery: it got a retryable
+     * failure (connection error, 5xx, 408, 429) on an automatic attempt that has a next one, and
+     * that next one is not overdue yet. Manual retries continue the numbering past the 7th.
+     */
+    private static function beelWillRetry(WebhookDeliveryLog $latest): bool
+    {
+        $status = $latest->getHttpStatus();
+        $retryable = $status === null || $status >= 500 || $status === 408 || $status === 429;
+        $wait = self::AUTOMATIC_RETRY_WAITS[($latest->getAttemptNumber() ?? 0) - 1] ?? null;
+
+        return $retryable && $wait !== null
+            && ($latest->getDeliveredAt()?->getTimestamp() ?? 0) + $wait + self::GRACE_SECONDS > Carbon::now()->getTimestamp();
     }
 
     /** @return Collection<int, WebhookDeliveryLog> */

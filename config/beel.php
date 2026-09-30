@@ -21,10 +21,12 @@ return [
     // services.beel.account_id; if you use it, create that API key with the webhooks:read and
     // webhooks:write scopes.
     'webhook_delivery_retry' => [
-        // Only events whose first delivery attempt is newer than this are retried.
-        'max_age_minutes' => 1440,
-        // Give up (and exit with failure) once an event has this many attempts, automatic ones included.
-        'max_attempts' => 8,
+        // Only events whose first delivery attempt is newer than this are retried. BeeL's own retries
+        // last about 67 hours (7 attempts), so keep it well above that: 4 days by default.
+        'max_age_minutes' => 5760,
+        // Give up (and exit with failure) once an event has this many attempts, BeeL's 7 automatic
+        // ones included: 10 leaves 3 manual retries.
+        'max_attempts' => 10,
         // Cron expression to schedule the command automatically, e.g. '*/15 * * * *'.
         // null leaves scheduling to the app. Either way `schedule:run` must be running.
         'schedule' => null,
