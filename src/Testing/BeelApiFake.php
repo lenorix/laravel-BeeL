@@ -67,6 +67,27 @@ final class BeelApiFake
         return $this->on('POST', '/v1/companies/{company}/invoices/'.self::id($id).'/corrective', self::ok($invoice, 201));
     }
 
+    /**
+     * `createSimplifiedExchange()`: the STANDARD invoice issued (recorded as F3) in exchange for
+     * simplified ones, which BeeL voids with `void_cause` `EXCHANGED`.
+     *
+     * @param  array<array-key, mixed>|PromiseInterface  $invoice
+     */
+    public function createSimplifiedExchange(array|PromiseInterface $invoice): self
+    {
+        return $this->on('POST', '/v1/companies/{company}/invoices/simplified-exchanges', self::ok($invoice, 201));
+    }
+
+    /**
+     * `listVerifactuRecords()`: an invoice's VERI*FACTU records, e.g. `[BeelFake::verifactuRecord()]`.
+     *
+     * @param  list<array<string, mixed>>|PromiseInterface  $records
+     */
+    public function listVerifactuRecords(array|PromiseInterface $records, ?string $id = null): self
+    {
+        return $this->on('GET', '/v1/companies/{company}/invoices/'.self::id($id).'/verifactu-records', $records instanceof PromiseInterface ? $records : self::ok(['records' => $records]));
+    }
+
     /** @param  array<array-key, mixed>|PromiseInterface  $result */
     public function sendInvoice(array|PromiseInterface $result = ['queued' => true], ?string $id = null): self
     {

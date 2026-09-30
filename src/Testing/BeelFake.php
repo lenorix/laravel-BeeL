@@ -187,6 +187,28 @@ final class BeelFake
         ], $overrides);
     }
 
+    /**
+     * A VERI*FACTU record of an invoice (`listVerifactuRecords()`): `operation` `REGISTRATION` or
+     * `VOID`, each with its own status. Its id is the webhook's `verifactu_registration_id`.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    public static function verifactuRecord(array $overrides = []): array
+    {
+        return self::merge([
+            'id' => '2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
+            'operation' => 'REGISTRATION',
+            'submission_status' => 'ACCEPTED',
+            'invoice_hash' => 'a7f3c9e2b1d4f8a6c3e9b2d5f1a8c4e7b9d2f5a1c8e4b7d3f9a2c6e1b5d8f4a7',
+            'registration_number' => '8d1f2e3c-4b5a-4c6d-8e7f-9a0b1c2d3e4f',
+            'registered_at' => '2025-01-20T10:31:12Z',
+            'qr_url' => 'https://verifactu.agenciatributaria.gob.es/v?id=a7f3c9e2b1d4f8a6',
+            'error_code' => null,
+            'error_message' => null,
+        ], $overrides);
+    }
+
     /** A PDF download response, as the pre-signed URL answers it. */
     public static function pdf(string $contents = "%PDF-1.7\n%fake invoice\n%%EOF\n"): PromiseInterface
     {

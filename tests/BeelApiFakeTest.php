@@ -132,3 +132,20 @@ it('fakes archives, exports and draft previews so the store methods work end to 
         ->and($invoices->storePreviewPdf('inv-1', 'p.pdf', disk: 'files')->path)->toBe('p.pdf')
         ->and(Storage::disk('files')->allFiles())->toEqualCanonicalizing(['a.zip', 'e.xlsx', 'p.pdf']);
 });
+
+it('fakes a simplified-invoice exchange and an invoice\'s VERI*FACTU records through the SDK', function () {
+    BeelFake::api()
+        ->createSimplifiedExchange(BeelFake::invoice(['id' => 'inv-f3', 'type' => 'STANDARD']))
+        ->listVerifactuRecords([BeelFake::verifactuRecord(), BeelFake::verifactuRecord(['id' => 'rec-void', 'operation' => 'VOID', 'submission_status' => 'PENDING'])])
+        ->fake();
+    $invoices = app(BeelManager::class)->company()->invoices;
+
+    $exchange = $invoices->createSimplifiedExchange(['simplified_invoice_ids' => ['s-1', 's-2'], 'recipient' => ['legal_name' => 'Cliente SL', 'nif' => 'B87654321']]);
+    $records = $invoices->listVerifactuRecords('inv-1')->getRecords();
+
+    expect($exchange->getId())->toBe('inv-f3')
+        ->and($records)->toHaveCount(2)
+        ->and($records[1]->getOperation())->toBe('VOID')
+        ->and($records[1]->getSubmissionStatus())->toBe('PENDING');
+    Http::assertSent(fn (ClientRequest $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/invoices/simplified-exchanges') && $r['simplified_invoice_ids'] === ['s-1', 's-2']);
+});
