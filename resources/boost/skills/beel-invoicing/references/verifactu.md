@@ -1,6 +1,6 @@
 # VERI*FACTU: what an app on BeeL still has to know
 
-Summarised from the AEAT VERI*FACTU FAQ (updated 2026-07-21) and Orden HAC/1177/2024 on 2026-09-26. BeeL implements the technical system (records, hash chain, submission). This file exists so the app does not contradict the rules in its own data model, UI or documents. For legal interpretation defer to the AEAT and the taxpayer's advisor.
+Summarised from the AEAT VERI*FACTU FAQ (updated 2026-07-21) and Orden HAC/1177/2024 on 2026-09-26; QR placement and invoice types rechecked against BeeL's rules on 2026-09-30. BeeL implements the technical system (records, hash chain, submission). This file exists so the app does not contradict the rules in its own data model, UI or documents. For legal interpretation defer to the AEAT and the taxpayer's advisor.
 
 ## Legal basis
 
@@ -26,7 +26,7 @@ Summarised from the AEAT VERI*FACTU FAQ (updated 2026-07-21) and Orden HAC/1177/
 - Two record types: alta (issue) and anulación (void). Records are never edited: a new record completes, corrects or voids the earlier one.
 - Chaining: SHA-256 (64 uppercase hex) over the record's key fields plus the previous record's full hash. One chain per invoicing system and taxpayer, shared by alta and anulación records in generation order; it does not restart per series or per year. `RegistroAnterior` carries the full previous hash with issuer, number and issue date.
 - Sending is automatic and continuous but batched: the system waits between submissions (initially 60 s, as the AEAT indicates in each response) or until 1,000 records are pending. If the AEAT is unreachable, invoicing continues and pending records are sent later in order, retrying at least hourly. Consequence for apps: the AEAT status of a just-issued invoice is `PENDING` for a while, so never block a user flow waiting for it.
-- On rejection the AEAT returns an error code and the record must be fixed and resent (subsanación). Through BeeL, act on `submission_status = REJECTED`; the exact AEAT response states are defined in the AEAT XSD/validation documents and were not verified here.
+- On rejection the AEAT returns an error code. Through BeeL, act on `submission_status = REJECTED`: the invoice is not registered, so void it and reissue it (a corrective is refused); the codes and what to do are in `beel-api.md` ("VERI*FACTU status on an invoice").
 
 ## QR code and legend
 
@@ -35,13 +35,15 @@ Required on every invoice issued from a covered system. BeeL's own PDF already i
 - Use the QR content BeeL returns (`verifactu.qr_url`, or the image in `qr_base64`); never build or alter the URL yourself.
 - ISO/IEC 18004 QR, error correction level M, printed between 30x30 and 40x40 mm.
 - Placement: at the start of the invoice, before its content, once, on the first page (top centre or top left in portrait, top left in landscape).
-- In VERI*FACTU mode, next to the QR: "VERI*FACTU" or "Factura verificable en la sede electrónica de la AEAT".
+- In VERI*FACTU mode, just below the QR (preferably centred): "VERI*FACTU" or "Factura verificable en la sede electrónica de la AEAT", in a type at least as large as the rest of the invoice data; only on invoices actually sent to the AEAT.
+- Just above the QR: "QR tributario:". Leave at least 2 mm of blank margin on every side (6 mm recommended).
+- Distribute the PDF only once the QR exists (`qr_url` is present from `PENDING`).
 - For structured electronic invoices (XML) the QR image may be replaced by the URL it encodes.
 - Third-party specifications describe the URL as the AEAT `ValidarQR` endpoint with `nif`, `numserie`, `fecha` (DD-MM-YYYY) and `importe` parameters; that is informative only, since BeeL supplies the URL.
 
 ## Invoice types and corrections
 
-- F1 full invoice; F2 simplified invoice; F3 invoice replacing simplified ones (not supported by BeeL: use an R5 TOTAL corrective plus a new F1).
+- F1 full invoice; F2 simplified invoice; F3 invoice replacing simplified ones (BeeL: `createSimplifiedExchange()`, which issues a STANDARD invoice recorded as F3 and voids the F2s; not an R5).
 - Corrective (rectificativa) codes: R1 legal error or LIVA art. 80.1, 80.2, 80.6; R2 insolvency (art. 80.3); R3 bad debt (art. 80.4); R4 other causes; R5 correction of a simplified invoice. The AEAT distinguishes correction "por sustitución" (S, full corrected amounts) and "por diferencias" (I, only the difference); through BeeL choose `PARTIAL` or `TOTAL` as documented in `beel-api.md` and let BeeL build the record.
 - Dates: fecha de expedición is the issue date; fecha de operación is when the sale or service happened (BeeL `operation_date`) and can differ.
 - Anulación is for an invoice that should not exist; changes to a real operation (returns, discounts, wrong amounts) use a rectificativa. When in doubt, ask the taxpayer's advisor rather than choosing silently.
@@ -60,6 +62,8 @@ Required on every invoice issued from a covered system. BeeL's own PDF already i
 - Keep the QR and legend on every rendered copy of the invoice, including emails with PDFs and invoices for foreign customers.
 
 ## Sources
+
+- BeeL rules QRC-001 to QRC-009 (https://docs.beel.es/verifactu/qr-and-pdf), checked on 2026-09-30.
 
 - https://sede.agenciatributaria.gob.es/Sede/iva/sistemas-informaticos-facturacion-verifactu/preguntas-frecuentes.html and its sub-pages (cuestiones generales, firma, huella-hash, trazabilidad, sistemas VERI*FACTU, remisión al receptor, registros de alta y anulación, declaración responsable).
 - https://sede.agenciatributaria.gob.es/Sede/iva/sistemas-informaticos-facturacion-verifactu/nota-informativa-ampliacion-plazo-adaptacion-facturacion.html
